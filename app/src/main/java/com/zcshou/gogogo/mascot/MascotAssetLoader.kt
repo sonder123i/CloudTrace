@@ -35,6 +35,15 @@ object MascotAssetLoader {
         }.getOrDefault(false)
 
     fun stop(imageView: ImageView) {
+        // AnimatedImageDrawable 自 API 28 才有；API 27 上引用该类会在
+        // 校验阶段抛 NoClassDefFoundError，必须先按版本隔离。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            stopAnimated(imageView)
+        }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.P)
+    private fun stopAnimated(imageView: ImageView) {
         (imageView.drawable as? AnimatedImageDrawable)?.stop()
     }
 }

@@ -449,7 +449,9 @@ class RunSessionService : Service() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
             } else {
-                @Suppress("DEPRECATION")
+                // RECEIVER_NOT_EXPORTED 重载自 API 33 才有；旧系统运行时注册默认「导出」，
+                // 顶部的 onReceive 已校验 intent 的 packageName，伪造广播不会生效。
+                @Suppress("UnspecifiedRegisterReceiverFlag", "DEPRECATION")
                 registerReceiver(receiver, filter)
             }
         }

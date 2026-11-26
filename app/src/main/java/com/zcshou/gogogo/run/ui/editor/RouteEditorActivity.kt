@@ -268,16 +268,27 @@ class RouteEditorActivity : AppCompatActivity() {
     private suspend fun readGpxBounded(uri: android.net.Uri): Pair<Boolean, String?> =
         withContext(Dispatchers.IO) {
             runCatching {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    val bytes = input.readNBytes(MAX_GPX_BYTES + 1)
-                    if (bytes.size > MAX_GPX_BYTES) {
-                        true to null
-                    } else {
-                        false to String(bytes, Charsets.UTF_8)
-                    }
-                }
+                contentResolver.openInputStream(uri)?.use { input -> readBounded(input) }
             }.getOrNull() ?: (false to null)
         }
+
+    /**
+     * 截断读取：API 27–32 没有 InputStream#readNBytes（API 33 才加入，
+     * 未开 core library desugaring 时调用会 NoSuchMethodError），这里手写等价实现。
+     *
+     * @return 是否超限 + 内容；超限时内容为 null
+     */
+    private fun readBounded(input: java.io.InputStream): Pair<Boolean, String?> {
+        val buffer = ByteArray(MAX_GPX_BYTES + 1)
+        var total = 0
+        while (total < buffer.size) {
+            val read = input.read(buffer, total, buffer.size - total)
+            if (read < 0) break
+            total += read
+        }
+        return if (total > MAX_GPX_BYTES) true to null
+        else false to String(buffer, 0, total, Charsets.UTF_8)
+    }
 
     private val locationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->

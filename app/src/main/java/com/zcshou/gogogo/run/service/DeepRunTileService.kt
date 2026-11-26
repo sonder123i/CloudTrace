@@ -83,7 +83,8 @@ class DeepRunTileService : TileService() {
             )
             startActivityAndCollapse(pending)
         } else {
-            @Suppress("DEPRECATION")
+            // PendingIntent 重载自 API 34 才有，旧系统只能用 Intent 重载
+            @Suppress("StartActivityAndCollapseDeprecated", "DEPRECATION")
             startActivityAndCollapse(intent)
         }
     }
