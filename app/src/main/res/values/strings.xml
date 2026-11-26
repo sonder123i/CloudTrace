@@ -171,6 +171,8 @@
     <string name="feedback_eyebrow">问题反馈</string>
     <string name="feedback_title">遇到问题了？</string>
     <string name="feedback_intro">把诊断信息和日志一起发到 GitHub Issues，能最快定位 ROM 权限、更新或崩溃问题。</string>
+    <string name="feedback_limits_title">先看已知限制</string>
+    <string name="feedback_limits_body">· 「检测到模拟位置的软件」：支付类应用会读取系统里的「模拟位置信息应用」登记，云迹无法清除它。使用支付类应用前，把该项设为「无」。\n· 「GPS 信号弱」：模拟位置期间不产生真实卫星流，以卫星数判断信号的应用会一直提示弱。\n· 关掉云迹后定位异常：1.14.2 起重新打开应用或开机会自动清理残留，仍异常请重启手机。\n· 某些应用不读系统位置：先确认它已获得定位权限，再停止并重启模拟，在应用内刷新。</string>
     <string name="feedback_diag_title">诊断信息</string>
     <string name="feedback_diag_loading">正在收集…</string>
     <string name="feedback_copy">复制诊断信息</string>

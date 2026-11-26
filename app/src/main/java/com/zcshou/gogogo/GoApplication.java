@@ -16,6 +16,7 @@ import com.elvishew.xlog.printer.file.backup.NeverBackupStrategy;
 import com.elvishew.xlog.printer.file.clean.FileLastModifiedCleanStrategy;
 import com.elvishew.xlog.printer.file.naming.ChangelessFileNameGenerator;
 import com.zcshou.gogogo.run.diagnostics.CrashJournal;
+import com.zcshou.gogogo.run.guard.TestProviderCleaner;
 import com.zcshou.gogogo.run.ui.theme.ThemeHelper;
 
 import java.io.File;
@@ -33,6 +34,11 @@ public class GoApplication extends Application {
         CrashJournal.INSTANCE.install(this);
 
         initXlog();
+
+        // provider 残留自愈：进程被杀/崩溃时 Service.onDestroy 不执行，
+        // 可能留下被顶掉的系统 GPS provider（真实定位长期不可用）。
+        // 内部限定只在主进程执行，避免 :remote 清掉主进程正在使用的 provider。
+        TestProviderCleaner.INSTANCE.cleanupIfMainProcess(this);
 
         // V4.0：把用户选择的主题同步为 AppCompat 全局夜间模式，
         // 保证 res/values-night 的深海光学 Token 与手动 setTheme 的选择一致。

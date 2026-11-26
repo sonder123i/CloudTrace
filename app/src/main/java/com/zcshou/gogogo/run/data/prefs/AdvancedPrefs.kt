@@ -19,9 +19,12 @@ object AdvancedPrefs {
         prefs(context).edit().putBoolean(KEY_SHIZUKU_WIFI, enabled).apply()
     }
 
-    /** 坐标注入心跳间隔：200ms 更顺滑，1000ms 更省电，默认 500ms */
+    /**
+     * 坐标注入（fix）间隔：只决定注入频率，与引擎 500ms 心跳解耦。
+     * 默认 1000ms ≈ 真机 GPS 1Hz（更接近真实 fix 节奏，也更省电）。
+     */
     fun injectionIntervalMs(context: Context): Long =
-        prefs(context).getLong(KEY_INJECTION_INTERVAL, 500L).coerceIn(200L, 1000L)
+        prefs(context).getLong(KEY_INJECTION_INTERVAL, 1000L).coerceIn(200L, 1000L)
 
     fun setInjectionIntervalMs(context: Context, value: Long) {
         prefs(context).edit().putLong(KEY_INJECTION_INTERVAL, value.coerceIn(200L, 1000L)).apply()

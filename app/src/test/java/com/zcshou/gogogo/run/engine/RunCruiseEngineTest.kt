@@ -253,4 +253,43 @@ class RunCruiseEngineTest {
         val meters = engine.state.value.accumulatedMeters
         assertTrue("达标后应多跑 20m 再收尾，实际=$meters", meters >= 39.0)
     }
+
+    @Test
+    fun injectThrottle_halvesFixRateWithoutSlowingUi() = runBlocking {
+        // fix 节流只压注入频率：同一场景下注入间隔翻倍，帧数应恰好减半，
+        // 而心跳（UI/积分）仍按 tickMillis 走，靠 accumulate 里程不变来间接验证。
+        suspend fun run(intervalMs: Long): Pair<Int, Double> {
+            val injector = RecordingInjector()
+            val engine = RunCruiseEngine(
+                env = FakeEnv(FakeClock()),
+                injector = injector,
+                repository = null,
+                tickMillis = 5L,
+                random = Random(11),
+                settleMillis = 20L,
+                cooldownMillis = 20L,
+                dwellMillis = 10L,
+                randomStartSlice = false,
+                injectIntervalMs = intervalMs
+            )
+            engine.startWithPoints(
+                route(),
+                densePoints(),
+                targetKm = 0.03f,
+                targetPaceSecPerKm = 340,
+                distanceJitterMeters = 0,
+                enableLaneDrift = false,
+                enableCooldownWalk = false
+            )
+            awaitPhase(engine, RunPhase.FINISHED, 40_000)
+            return injector.frames.size to engine.state.value.accumulatedMeters
+        }
+
+        val (everyTick, metersFast) = run(5L)
+        val (everyOtherTick, metersSlow) = run(10L)
+
+        assertTrue("基础注入应产生足够帧，实际=$everyTick", everyTick > 40)
+        assertEquals("节流 2 倍应恰好一半帧", everyTick / 2, everyOtherTick)
+        assertEquals("节流不应改变里程", metersFast, metersSlow, 0.5)
+    }
 }

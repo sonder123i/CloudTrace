@@ -258,6 +258,9 @@ object FreeRoamController {
         _state.value = RoamState()
     }
 
+    /** 漫游注入的水平精度（随机游走状态，避免固定值穿帮） */
+    private var roamAccuracy = 4.5f
+
     /**
      * finally 自清必须带身份校验：被取消的旧协程，其 finally 可能在
      * 新 glideJob 赋值之后才执行，直接置空会丢掉新任务的引用，
@@ -275,10 +278,12 @@ object FreeRoamController {
         }
         val seconds = SystemClock.elapsedRealtime() / 1000.0
         val alt = _state.value.baseAltitude + 1.2 * sin(seconds / 20.0)
+        // 漫游的精度也做随机游走：注入层现在尊重传入值，固定 4.0m 反而是机械特征
+        roamAccuracy = (roamAccuracy + (Math.random() - 0.5).toFloat() * 0.6f).coerceIn(3.0f, 9.0f)
         inj.injectLocation(
             p.lat, p.lng, alt,
             speed.toFloat(), bearing.toFloat(),
-            4.0f, 6.0f, 0.5f, 8.0f
+            roamAccuracy, 6.0f, 0.5f, 8.0f
         )
         _state.value = _state.value.copy(position = p, speedMps = speed)
     }

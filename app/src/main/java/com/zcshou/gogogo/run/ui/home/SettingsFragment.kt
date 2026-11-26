@@ -179,7 +179,7 @@ class SettingsFragment : Fragment() {
             if (scanOn) "系统「始终允许扫描」开启，仅提示，不影响开跑" else "后台扫描已关闭"
 
         root.findViewById<View>(R.id.rowInjectInterval).findViewById<TextView>(R.id.envSubtitle).text =
-            "当前 ${AdvancedPrefs.injectionIntervalMs(context)}ms · 200ms 更顺滑，1000ms 更省电"
+            "当前 ${AdvancedPrefs.injectionIntervalMs(context)}ms 注入间隔 · 心跳 ≤500ms，200ms 更实时，1000ms 更省电"
 
         val shizukuRow = root.findViewById<View>(R.id.rowShizuku)
         val switch = shizukuRow.findViewById<SwitchCompat>(R.id.advancedSwitch)

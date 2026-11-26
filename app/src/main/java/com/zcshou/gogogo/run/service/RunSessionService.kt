@@ -163,7 +163,9 @@ class RunSessionService : Service() {
                 applicationContext,
                 binder.injector,
                 repository,
-                tickMillis = AdvancedPrefs.injectionIntervalMs(applicationContext),
+                // 心跳：注入间隔 ≤500ms 时跟随它（保住 200ms 的顺滑档），否则固定 500ms
+                tickMillis = minOf(500L, AdvancedPrefs.injectionIntervalMs(applicationContext)),
+                injectIntervalMs = AdvancedPrefs.injectionIntervalMs(applicationContext),
                 overshootMeters = 15..65
             )
             // 系统自动重连会再次回调 onServiceConnected：先取消旧收集，

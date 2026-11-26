@@ -19,6 +19,8 @@
     <!-- 定时通知（首次开跑时按需申请） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- 开机清理残留的模拟位置 test provider（进程被杀时不会走 onDestroy） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- 可选 Shizuku 联动 -->
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
@@ -107,6 +109,15 @@
         <receiver
             android:name=".run.guard.RunScheduleAlarmReceiver"
             android:exported="false" />
+
+        <!-- 开机一次性清理残留 test provider：只清理，不拉起任何服务 -->
+        <receiver
+            android:name=".run.guard.TestProviderBootCleaner"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!-- 可选 Shizuku 联动 Provider -->
         <provider

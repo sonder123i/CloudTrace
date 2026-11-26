@@ -23,8 +23,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.ln
 import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
@@ -41,7 +44,13 @@ class RunCruiseEngine(
     private val dwellMillis: Long = DETOUR_DWELL_MS,
     private val randomStartSlice: Boolean = true,
     /** 达标后额外多跑的距离区间（米）；0..0 表示达标即收尾 */
-    private val overshootMeters: IntRange = 0..0
+    private val overshootMeters: IntRange = 0..0,
+    /**
+     * 注入（fix）间隔：默认跟随心跳，生产侧传 1000ms。
+     * 与 tickMillis 解耦后 fix 频率接近真机 1Hz，而 UI 发布、物理积分、
+     * 摇杆响应仍按 500ms 走，不会变卡。
+     */
+    private val injectIntervalMs: Long = tickMillis
 ) {
 
     constructor(
@@ -50,11 +59,24 @@ class RunCruiseEngine(
         repository: RunRecordSink? = null,
         tickMillis: Long = 500L,
         random: Random = Random.Default,
-        overshootMeters: IntRange = 0..0
+        overshootMeters: IntRange = 0..0,
+        injectIntervalMs: Long = tickMillis
     ) : this(
         ContextEngineEnv(context), injector, repository, tickMillis, random,
-        overshootMeters = overshootMeters
+        overshootMeters = overshootMeters,
+        injectIntervalMs = injectIntervalMs
     )
+
+    /** fix 节流：每 N 次心跳注入一次（N = 注入间隔 / 心跳，四舍五入，至少 1） */
+    private val injectEveryNthTick: Long =
+        ((injectIntervalMs + tickMillis.coerceAtLeast(1L) / 2) / tickMillis.coerceAtLeast(1L))
+            .coerceAtLeast(1L)
+
+    /** 已执行的心跳计数，用于 fix 节流 */
+    private var tickCount = 0L
+
+    /** accuracy 随机游走状态：真机精度是缓慢漂移，逐拍独立重采样会被判为抖动 */
+    private var accuracyWalk = 6.5f
 
     companion object {
         private const val TAG = "RunCruise"
@@ -74,7 +96,7 @@ class RunCruiseEngine(
         private const val DETOUR_DWELL_METERS = 12.0
         private const val CURVATURE_LOOKAROUND_M = 8.0
         private const val ACCURACY_MIN = 3.5f
-        private const val ACCURACY_MAX = 8.0f
+        private const val ACCURACY_MAX = 12.0f
         private const val VERTICAL_ACC_MIN = 2.0f
         private const val VERTICAL_ACC_MAX = 5.0f
         private const val SPEED_ACC_MIN = 0.3f
@@ -582,17 +604,31 @@ class RunCruiseEngine(
         val fraction = if (lapLength > 0) (progressMeters % lapLength) / lapLength else 0.0
         val altitude = TrackMathUtils.microTerrainAltitude(baseAltitudeM, fraction, random = random)
         val bearing = (lastBearing + random.nextDouble(-2.0, 2.0) + 360.0) % 360.0
+
+        // fix 节流：只压注入频率；UI 发布、物理积分、摇杆响应仍按 tickMillis 走。
+        // 用「心跳计数」而不是墙钟差值，保证测试用假时钟时行为可预期。
+        if (++tickCount % injectEveryNthTick != 0L) return
+
+        // 精度随机游走：单一事实源放在引擎侧，注入层不再二次重采样
+        accuracyWalk = (accuracyWalk + gaussian() * 0.35f).coerceIn(ACCURACY_MIN, ACCURACY_MAX)
         injector.injectLocation(
             position.lat,
             position.lng,
             altitude,
             speedMps.toFloat().coerceAtLeast(0f),
             bearing.toFloat(),
-            random.nextDouble(ACCURACY_MIN.toDouble(), ACCURACY_MAX.toDouble()).toFloat(),
+            accuracyWalk,
             random.nextDouble(VERTICAL_ACC_MIN.toDouble(), VERTICAL_ACC_MAX.toDouble()).toFloat(),
             random.nextDouble(SPEED_ACC_MIN.toDouble(), SPEED_ACC_MAX.toDouble()).toFloat(),
             random.nextDouble(BEARING_ACC_MIN.toDouble(), BEARING_ACC_MAX.toDouble()).toFloat()
         )
+    }
+
+    /** Box–Muller：kotlin.random.Random 没有 nextGaussian */
+    private fun gaussian(): Float {
+        val u1 = random.nextDouble().coerceAtLeast(1e-7)
+        val u2 = random.nextDouble()
+        return (sqrt(-2.0 * ln(u1)) * cos(2.0 * PI * u2)).toFloat()
     }
 
     private fun publish() {
