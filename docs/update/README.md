@@ -61,8 +61,15 @@ GOGOGO_UPDATE_ALLOWED_HOSTS=<你的域名>,gitee.com,foruda.gitee.com,github.com
 
 ## 2. 发版
 
+> ⚠️ **以 tag 触发的 CI 产物为准。** 推 `v*` tag 会触发 `.github/workflows/build-release.yml`：
+> 它用**自己的构建**发布 Release 并覆盖同名资产（`softprops/action-gh-release`）。
+> CI 构建不是逐字节可复现的，所以本地 `assembleRelease` 出来的 APK 与线上文件
+> **通常不是同一份**。签名清单必须用**线上实际发布的那个文件**生成，
+> 否则客户端会在下载前拦下「下载文件长度与清单不一致」，用户完全无法更新
+> （1.14.4 和 1.14.5 首次发布都踩过这个坑）。
+
 1. 修改 `app/build.gradle` 的 `versionCode` / `versionName`（必须单调递增）。
-2. 构建 arm64 release：
+2. 本地构建一次，用于自检（**不要**用它生成签名清单）：
 
    ```bash
    ./gradlew :app:assembleRelease
@@ -70,8 +77,15 @@ GOGOGO_UPDATE_ALLOWED_HOSTS=<你的域名>,gitee.com,foruda.gitee.com,github.com
 
    产物：`app/build/outputs/apk/release/CloudTrace_<version>_arm64-v8a_release.apk`
 
-3. 上传 APK 到 GitHub Release / Gitee Release，拿到两个下载地址。
-4. 写更新日志，例如 `release-notes/v1.14.4.md`。
+3. 推 tag，等 `Build Release` 跑完，然后**把这个 CI 上传的文件下载下来**作为基准：
+
+   ```bash
+   gh release download v<version> --repo <owner>/CloudTrace --pattern "*.apk" --dir /tmp/ci --clobber
+   ```
+
+   用 Gitee 发行版覆盖同名字段时，也传这同一份文件（删除旧附件后重新上传）。
+
+4. 写更新日志，例如 `release-notes/v1.14.5.md`。
    这份文件会放进签名清单，并在更新弹窗的「本次更新」里展示。请按用户视角写：
    先说用户能感知到什么，不写类名、函数名和排查过程；版本号标题和「校验」段会被
    `UpdateNotesFormatter` 裁掉，其余内容直接给用户看。
