@@ -136,6 +136,7 @@ class MascotPeekView @JvmOverloads constructor(
 
     private fun hideBubble(generation: Int = -1) {
         bubbleHide?.let { bubble.removeCallbacks(it) }
+        bubbleHide?.let { removeCallbacks(it) }
         bubbleHide = null
         if (bubble.visibility != View.VISIBLE) return
         val current = generation < 0 || generation == bubbleGeneration
@@ -147,16 +148,20 @@ class MascotPeekView @JvmOverloads constructor(
             .scaleY(0.94f)
             .setDuration(140L)
             .start()
-        postDelayed({
+        val finishHide = Runnable {
             if (bubbleGeneration == generation || generation < 0) {
                 bubble.visibility = View.GONE
             }
-        }, 150L)
+            bubbleHide = null
+        }
+        bubbleHide = finishHide
+        postDelayed(finishHide, 150L)
     }
 
     private fun hideBubbleImmediately() {
         bubbleGeneration++
         bubbleHide?.let { bubble.removeCallbacks(it) }
+        bubbleHide?.let { removeCallbacks(it) }
         bubbleHide = null
         bubble.animate().cancel()
         bubble.visibility = View.GONE

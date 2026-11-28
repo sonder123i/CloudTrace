@@ -75,8 +75,8 @@ android {
         applicationId "com.zcshou.gogogo"
         minSdkVersion 27
         targetSdkVersion 34
-        versionCode 1143
-        versionName '1.14.3' // https://semver.org/lang/zh-CN/
+        versionCode 1144
+        versionName '1.14.4' // https://semver.org/lang/zh-CN/
         buildConfigField "String", "UPDATE_MANIFEST_URL", buildConfigString(updateManifestUrl)
         buildConfigField "String", "UPDATE_BACKUP_URL", buildConfigString(updateBackupUrl)
         buildConfigField "String", "UPDATE_ALLOWED_HOSTS", buildConfigString(updateAllowedHosts)
@@ -84,7 +84,7 @@ android {
         buildConfigField "String", "MAPS_API_KEY", buildConfigString(mapsApiKey)
         buildConfigField "String", "MAPS_SAFE_CODE", buildConfigString(mapsSafeCode)
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-        resourceConfigurations += ['zh', 'zh-rCN', 'en', 'en-rUS']
+        resourceConfigurations += ['zh', 'zh-rCN']
         ndk {
             //noinspection ChromeOsAbiSupport
             abiFilters "arm64-v8a"
@@ -109,7 +109,6 @@ android {
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.release
             }
-            multiDexEnabled = true
         }
         debug {
             // 本地有发布签名时沿用它，保证百度地图 AK 安全码（包名+签名）在调试包上一致；
@@ -123,7 +122,6 @@ android {
     // 地图 KEY 与更新地址通过 buildConfigField 注入，来源为 local.properties 或环境变量
     buildFeatures {
         buildConfig = true
-        viewBinding = true
     }
 
     // Room schema JSON 导出到 app/schemas/ 入库（GoRunDatabase.exportSchema = true）
@@ -212,6 +210,9 @@ dependencies {
     // Phase 5：可选 Shizuku 联动（未安装/未授权时安全降级为弹窗提醒）
     implementation libs.shizuku.api
     implementation libs.shizuku.provider
+    // 路线二维码：纯 Java 核心库，仅用于生成 Bitmap 与解析相册截图，
+    // 不引入相机依赖、不申请 CAMERA 权限、无额外 .so 体积
+    implementation libs.zxing.core
     testImplementation libs.junit
     // 更新清单验签单测：android.jar 里的 org.json 是空壳，补真实实现
     testImplementation libs.org.json

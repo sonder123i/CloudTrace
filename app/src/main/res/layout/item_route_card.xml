@@ -70,25 +70,49 @@
                     android:textColor="@color/pf_text_secondary"
                     android:textSize="11sp" />
 
-                <TextView
-                    android:id="@+id/routeSchedule"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="5dp"
-                    android:background="?android:attr/selectableItemBackground"
-                    android:drawableStart="@drawable/ic_clock_line"
-                    android:drawablePadding="5dp"
-                    android:drawableTint="@color/pf_text_secondary"
-                    android:fontFeatureSettings="tnum"
-                    android:paddingTop="2dp"
-                    android:paddingBottom="2dp"
-                    android:shadowColor="@color/dr_text_float_shadow"
-                    android:shadowDx="0"
-                    android:shadowDy="1"
-                    android:shadowRadius="3"
-                    android:text="定时：未配置（点击设置）"
-                    android:textColor="@color/pf_text_secondary"
-                    android:textSize="11sp" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/routeSchedule"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="?android:attr/selectableItemBackground"
+                        android:drawableStart="@drawable/ic_clock_line"
+                        android:drawablePadding="5dp"
+                        android:drawableTint="@color/pf_text_secondary"
+                        android:fontFeatureSettings="tnum"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:shadowColor="@color/dr_text_float_shadow"
+                        android:shadowDx="0"
+                        android:shadowDy="1"
+                        android:shadowRadius="3"
+                        android:text="定时：未配置（点击设置）"
+                        android:textColor="@color/pf_text_secondary"
+                        android:textSize="11sp" />
+
+                    <!-- 仅在定时启用时出现：一键跳过今天这一次触发 -->
+                    <TextView
+                        android:id="@+id/routeSkipChip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="26dp"
+                        android:layout_marginStart="6dp"
+                        android:background="@drawable/bg_capsule"
+                        android:fontFeatureSettings="tnum"
+                        android:gravity="center"
+                        android:paddingStart="9dp"
+                        android:paddingEnd="9dp"
+                        android:text="跳过本次"
+                        android:textColor="@color/pf_text_secondary"
+                        android:textSize="10sp"
+                        android:visibility="gone" />
+                </LinearLayout>
             </LinearLayout>
 
             <ImageView

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件操作胶囊：冰青实心（深海光学主操作色） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#FF5CE1E6" />
+    <corners android:radius="100dp" />
+</shape>

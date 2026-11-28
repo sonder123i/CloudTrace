@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- V5.0 弹窗「保存」胶囊：黑曜石底（浅色）/ 纯白底（深色） -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="@color/dr_dialog_confirm_bg" />
-    <corners android:radius="100dp" />
-</shape>

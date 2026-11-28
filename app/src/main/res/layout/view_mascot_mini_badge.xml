@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    首页迷你鲸鲸角标：32dp 图像 + 可向下展开的台词气泡。
+    气泡浮在下方（大标题在页面顶部），不参与测量，避免出现时把标题挤开。
+-->
+<merge xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <ImageView
+        android:id="@+id/miniMascotImage"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
+        android:layout_gravity="center"
+        android:adjustViewBounds="true"
+        android:contentDescription="鲸鲸"
+        android:scaleType="fitCenter" />
+
+    <!--
+        气泡是 32dp 徽章的子 View：FrameLayout 会把可用宽度压到 32dp，
+        文字因此被拆成竖排单字（只看得见第一个字）。
+        这里给死 180dp 宽度 —— 配合 layout_gravity="top|end"，
+        它从徽章右边缘向左溢出 148dp，正好落在「N 条路线」胶囊与标题右侧，
+        再靠代码里的 translationY 下移到徽章底部，不遮住鲸鲸的脸。
+        祖先容器必须 clipChildren=false，否则溢出部分会被裁掉。
+    -->
+    <TextView
+        android:id="@+id/miniMascotBubble"
+        android:layout_width="180dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:background="@drawable/bg_bubble"
+        android:elevation="3dp"
+        android:ellipsize="end"
+        android:gravity="start"
+        android:maxLines="3"
+        android:paddingStart="9dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="9dp"
+        android:paddingBottom="6dp"
+        android:textColor="@color/pf_text_primary"
+        android:textSize="11sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+</merge>

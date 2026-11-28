@@ -18,6 +18,8 @@ object TrackMathUtils {
     private const val EARTH_RADIUS_M = 6371000.0
     private const val METERS_PER_DEG_LAT = 110574.0
     private const val METERS_PER_DEG_LNG_EQUATOR = 111320.0
+    /** 首尾距小于该值视为「带显式闭合点」 */
+    private const val EXPLICIT_CLOSE_EPSILON_M = 0.5
 
     data class LatLng(val lat: Double, val lng: Double)
 
@@ -26,8 +28,8 @@ object TrackMathUtils {
         val dLng = Math.toRadians(b.lng - a.lng)
         val lat1 = Math.toRadians(a.lat)
         val lat2 = Math.toRadians(b.lat)
-        val h = sin(dLat / 2).pow(2) + cos(lat1) * cos(lat2) * sin(dLng / 2).pow(2)
-        return 2 * EARTH_RADIUS_M * atan2(sqrt(h), sqrt(1 - h))
+        val h = (sin(dLat / 2).pow(2) + cos(lat1) * cos(lat2) * sin(dLng / 2).pow(2)).coerceIn(0.0, 1.0)
+        return 2 * EARTH_RADIUS_M * atan2(sqrt(h), sqrt(1.0 - h))
     }
 
     /** 航向角：正北 0°，顺时针 0~360 */
@@ -238,6 +240,68 @@ object TrackMathUtils {
         return baseAltitudeM + terrain + noise
     }
 
+    /**
+     * 轨迹是否构成闭环。
+     *
+     * 判定用「首尾间距相对平均点距」而不是绝对米数：`catmullRomClosed` 的输出
+     * 末点落在首点前一个采样步长（约 1 个 spacing），并没有显式重复点；
+     * 用固定 0.5m 会把这类标准闭环误判成开放路线。
+     */
+    fun isClosedLoop(points: List<LatLng>): Boolean {
+        if (points.size < 3) return false
+        val gap = distanceMeters(points.first(), points.last())
+        if (gap <= EXPLICIT_CLOSE_EPSILON_M) return true
+        val total = cumulativeDistances(points).last()
+        if (total <= 0.0) return false
+        val averageSpacing = total / (points.size - 1)
+        // 间距不超过 1.5 个采样步长：既覆盖「无显式闭合点」的环形轨迹，
+        // 又不会把首尾恰好靠近的开放折线误当成闭环
+        return gap <= averageSpacing * 1.5
+    }
+
+    /** 是否带显式闭合点（末点与首点几乎重合） */
+    fun hasExplicitClosePoint(points: List<LatLng>): Boolean =
+        points.size >= 2 && distanceMeters(points.first(), points.last()) <= EXPLICIT_CLOSE_EPSILON_M
+
+    /**
+     * 闭环轨迹重设起点：把 [newStartIndex] 转成新的第 0 点，其余点按原顺序环形接续，
+     * 并以「新首点的副本」收尾（始终产出显式闭合点）。
+     *
+     * 为什么必须显式补闭合点：环形重排会丢掉原来的「末点→首点」接缝段。
+     * 只做旋转的话，`cumulativeDistances().last()` 会比真实周长少一段
+     * （`catmullRomClosed` 输出正好少约一个采样步长），引擎的 lapLength
+     * 随之偏小、圈数统计偏多。补上闭合点后，输出总长等于环形周长。
+     *
+     * 非闭环轨迹原样返回：对开放折线做环形旋转会凭空造出一条「末点→首点」跳跃段，
+     * 调用方应改用 [reversePath]。
+     */
+    fun rotateLoopStart(points: List<LatLng>, newStartIndex: Int): List<LatLng> {
+        if (points.size < 2) return points
+        if (!isClosedLoop(points)) return points
+        // 已有显式闭合点时先摘掉末点，避免旋转后出现两个相邻重复点
+        val alreadyClosed = hasExplicitClosePoint(points)
+        val body = if (alreadyClosed) points.subList(0, points.size - 1) else points
+        if (body.size < 2) return points
+        val pivot = newStartIndex.coerceIn(0, body.size - 1)
+        // 起点不变且本来就有闭合点：无需改动
+        if (pivot == 0 && alreadyClosed) return points
+        val rotated = ArrayList<LatLng>(body.size + 1)
+        for (i in 0 until body.size) {
+            rotated.add(body[(pivot + i) % body.size])
+        }
+        rotated.add(rotated.first())
+        return rotated
+    }
+
+    /**
+     * 反转行进方向：纯倒序。
+     *
+     * 闭环倒序后首尾关系不变；开放折返路线倒序后从原终点出发，
+     * 由引擎的 ping-pong 逻辑负责折返，不需要在这里补点。
+     */
+    fun reversePath(points: List<LatLng>): List<LatLng> =
+        if (points.size < 2) points else points.reversed()
+
     private fun normalizeLng(lng: Double): Double = when {
         lng > 180.0 -> lng - 360.0
         lng < -180.0 -> lng + 360.0
@@ -261,14 +325,26 @@ object TrackMathUtils {
         p2: Pair<Double, Double>, p3: Pair<Double, Double>,
         t0: Double, t1: Double, t2: Double, t3: Double, t: Double
     ): Pair<Double, Double> {
-        val a1 = lerp(p0, p1, (t1 - t) / (t1 - t0), (t - t0) / (t1 - t0))
-        val a2 = lerp(p1, p2, (t2 - t) / (t2 - t1), (t - t1) / (t2 - t1))
-        val a3 = lerp(p2, p3, (t3 - t) / (t3 - t2), (t - t2) / (t3 - t2))
-        val b1 = lerp(a1, a2, (t2 - t) / (t2 - t0), (t - t0) / (t2 - t0))
-        val b2 = lerp(a2, a3, (t3 - t) / (t3 - t1), (t - t1) / (t3 - t1))
-        return lerp(b1, b2, (t2 - t) / (t2 - t1), (t - t1) / (t2 - t1))
-    }
+        val w10 = (t1 - t) / (t1 - t0); val w01 = (t - t0) / (t1 - t0)
+        val a1x = p0.first * w10 + p1.first * w01
+        val a1y = p0.second * w10 + p1.second * w01
 
-    private fun lerp(a: Pair<Double, Double>, b: Pair<Double, Double>, wa: Double, wb: Double): Pair<Double, Double> =
-        (a.first * wa + b.first * wb) to (a.second * wa + b.second * wb)
+        val w21 = (t2 - t) / (t2 - t1); val w12 = (t - t1) / (t2 - t1)
+        val a2x = p1.first * w21 + p2.first * w12
+        val a2y = p1.second * w21 + p2.second * w12
+
+        val w32 = (t3 - t) / (t3 - t2); val w23 = (t - t2) / (t3 - t2)
+        val a3x = p2.first * w32 + p3.first * w23
+        val a3y = p2.second * w32 + p3.second * w23
+
+        val w20 = (t2 - t) / (t2 - t0); val w02 = (t - t0) / (t2 - t0)
+        val b1x = a1x * w20 + a2x * w02
+        val b1y = a1y * w20 + a2y * w02
+
+        val w31 = (t3 - t) / (t3 - t1); val w13 = (t - t1) / (t3 - t1)
+        val b2x = a2x * w31 + a3x * w13
+        val b2y = a2y * w31 + a3y * w13
+
+        return (b1x * w21 + b2x * w12) to (b1y * w21 + b2y * w12)
+    }
 }

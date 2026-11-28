@@ -67,6 +67,7 @@ class RoamService : Service() {
     private var params: WindowManager.LayoutParams? = null
     private var lastNotifyAt = 0L
     private var lastSpeed = -1.0
+    private var foregroundReady = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -78,6 +79,7 @@ class RoamService : Service() {
         val foregroundStarted = EnvGuardManager.hasRuntimeLocation(this) && runCatching {
             startForeground(NOTIFICATION_ID, buildNotification(0.0))
         }.isSuccess
+        foregroundReady = foregroundStarted
         if (!foregroundStarted) {
             val blocked = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_stat_cloudtrace)
@@ -94,6 +96,10 @@ class RoamService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!foregroundReady) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_STOP -> {
                 stopEverything()
@@ -176,6 +182,20 @@ class RoamService : Service() {
             updateNotification(lastSpeed)
         }
         view.onStop = { stopEverything() }
+        view.onToast = { toast(it) }
+        // 快捷地标条展开/收起会改变面板高度：WRAP_CONTENT 窗口不会自动跟着变，
+        // 必须重排一次并把窗口拉回屏幕可用区域，否则触摸区与面板错位
+        view.onContentSizeChanged = {
+            runCatching {
+                val maxY = (screenHeight() - view.height - navBarHeight())
+                    .coerceAtLeast(statusBarHeight())
+                if (lp.y > maxY) {
+                    lp.y = maxY
+                    params = lp
+                }
+                wm.updateViewLayout(view, lp)
+            }
+        }
         view.dragHandler = { dx, dy, end ->
             lp.x = (lp.x + dx).coerceIn(0, (screenWidth() - view.width).coerceAtLeast(0))
             lp.y = (lp.y + dy).coerceIn(
@@ -224,9 +244,10 @@ class RoamService : Service() {
             FreeRoamController.state.collect { state ->
                 hub?.updateStatus(state.speedMps)
                 val now = android.os.SystemClock.elapsedRealtime()
-                if (now - lastNotifyAt > 1500 &&
+                val stoppedNow = state.speedMps <= 0.05 && lastSpeed > 0.05
+                val movedChange = now - lastNotifyAt > 1500 &&
                     kotlin.math.abs(state.speedMps - lastSpeed) > 0.05
-                ) {
+                if (stoppedNow || movedChange) {
                     lastNotifyAt = now
                     lastSpeed = state.speedMps
                     updateNotification(state.speedMps)
@@ -271,6 +292,7 @@ class RoamService : Service() {
                 PendingIntent.getActivity(
                     this, 0,
                     Intent(this, RunHomeActivity::class.java).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
                         putExtra(EXTRA_OPEN_ROAM, true)
                     },
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE

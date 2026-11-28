@@ -26,6 +26,7 @@ import org.json.JSONArray
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.ln
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
@@ -103,6 +104,22 @@ class RunCruiseEngine(
         private const val SPEED_ACC_MAX = 0.8f
         private const val BEARING_ACC_MIN = 5.0f
         private const val BEARING_ACC_MAX = 15.0f
+        /** 微地形起伏振幅（与 TrackMathUtils.microTerrainAltitude 默认值同源），用于累计爬升 */
+        private const val TERRAIN_AMPLITUDE_M = 1.2
+        /** 标准分段长度；目标里程过短时改用 min(单圈, 400m) 保证至少能分出几段 */
+        private const val SPLIT_STEP_LONG_M = 1000.0
+        private const val SPLIT_STEP_SHORT_M = 400.0
+        private const val SPLIT_TAIL_MIN_M = 50.0
+
+        // --- 遥测动作线索 ---
+        private const val WARMUP_CUE_METERS = 300.0
+        private const val SPRINT_CUE_METERS = 200.0
+        const val MOTION_WARMUP = "热身降速"
+        const val MOTION_TURN = "弯道减速"
+        const val MOTION_SPRINT = "末段冲刺"
+        const val MOTION_STEADY = "稳步巡航"
+        const val MOTION_COOLDOWN = "慢走缓冲"
+        const val MOTION_DETOUR = "绕路打卡"
     }
 
     // 引擎单线程：所有可变状态只在它上面读写。limitedParallelism(1) 保证
@@ -143,14 +160,18 @@ class RunCruiseEngine(
 
     private var paceSim: PaceSimulator? = null
     private var targetPaceSecPerKm = 340
+    private var activePaceStrategy = PaceStrategy.STEADY
     private var laneDriftEnabled = true
     private var cooldownEnabled = true
     private var laneFrom = 0.0
     private var laneTo = 0.0
 
     private var paused = false
+    private var wasCooldownBeforePause = false
     private var pauseCenter: TrackMathUtils.LatLng? = null
     private var wanderPos: TrackMathUtils.LatLng? = null
+    private var isClosedLoopTrack = true
+    private var pingPongForward = true
 
     private var detourPath: List<TrackMathUtils.LatLng> = emptyList()
     private var detourCumulative: DoubleArray = DoubleArray(0)
@@ -174,6 +195,18 @@ class RunCruiseEngine(
     private var lastLoggedMessage: String? = null
     private var baseAltitudeM = BASE_ALTITUDE_M
     private var manualOverride = false
+    /** 最近一次注入的海拔与动作线索：悬浮窗遥测行直接读，不必回算 */
+    private var lastAltitude = BASE_ALTITUDE_M
+    private var lastMotionCue: String? = null
+
+    // --- 真实分段与累计爬升（只在引擎单线程读写，finish 时一次落库） ---
+    private val splitMarks = ArrayList<RunSplit>(16)
+    private var splitStepMeters = SPLIT_STEP_LONG_M
+    private var splitStartMeters = 0.0
+    private var splitStartElapsedSec = 0L
+    private var splitNextBoundary = SPLIT_STEP_LONG_M
+    private var lastTerrainAltitude = Double.NaN
+    private var elevationGainMeters = 0.0
 
     fun start(
         route: RunRouteEntity,
@@ -183,7 +216,8 @@ class RunCruiseEngine(
         enableLaneDrift: Boolean = true,
         enableCooldownWalk: Boolean = true,
         resumeFrom: RunSnapshot? = null,
-        reverseDirection: Boolean = false
+        reverseDirection: Boolean = false,
+        paceStrategy: PaceStrategy = PaceStrategy.STEADY
     ) {
         startWithPoints(
             route = route,
@@ -194,7 +228,8 @@ class RunCruiseEngine(
             enableLaneDrift = enableLaneDrift,
             enableCooldownWalk = enableCooldownWalk,
             resumeFrom = resumeFrom,
-            reverseDirection = reverseDirection
+            reverseDirection = reverseDirection,
+            paceStrategy = paceStrategy
         )
     }
 
@@ -208,7 +243,8 @@ class RunCruiseEngine(
         enableLaneDrift: Boolean = true,
         enableCooldownWalk: Boolean = true,
         resumeFrom: RunSnapshot? = null,
-        reverseDirection: Boolean = false
+        reverseDirection: Boolean = false,
+        paceStrategy: PaceStrategy = PaceStrategy.STEADY
     ) {
         if (active) return
         val dense = densePoints
@@ -219,6 +255,8 @@ class RunCruiseEngine(
         routeId = route.id
         routeName = route.name
         baseAltitudeM = route.baseAltitudeMeters
+        isClosedLoopTrack = route.isClosedLoop
+        pingPongForward = true
         val oriented = if (route.isClockwise != reverseDirection) dense else dense.reversed()
         points = TrackMathUtils.smooth3(oriented)
         cumulative = TrackMathUtils.cumulativeDistances(points)
@@ -234,7 +272,8 @@ class RunCruiseEngine(
                 overshootMeters.last + 1
             )
         }
-        paceSim = PaceSimulator(targetPaceSecPerKm, random)
+        paceSim = PaceSimulator(targetPaceSecPerKm, random, strategy = paceStrategy)
+        activePaceStrategy = paceStrategy
         this.targetPaceSecPerKm = targetPaceSecPerKm
         laneDriftEnabled = enableLaneDrift
         cooldownEnabled = enableCooldownWalk
@@ -246,17 +285,42 @@ class RunCruiseEngine(
             totalMeters = 0.0
             lapIndex = 0
         }
-        // 闭环路线随机切片起跑点，避免每次都从同一坐标发车
-        val startSlice = if (randomStartSlice && resumeFrom == null && lapLength > 0) {
+        // 分段步长：长距离按 1km，短目标改用 min(单圈, 400m)，保证总能复盘出多段
+        splitStepMeters = if (targetMeters < 1500.0) {
+            minOf(lapLength.takeIf { it > 1.0 } ?: SPLIT_STEP_SHORT_M, SPLIT_STEP_SHORT_M)
+                .coerceAtLeast(SPLIT_TAIL_MIN_M)
+        } else {
+            SPLIT_STEP_LONG_M
+        }
+        splitMarks.clear()
+        splitStartMeters = totalMeters
+        splitStartElapsedSec = 0L
+        splitNextBoundary = totalMeters + splitStepMeters
+        lastTerrainAltitude = Double.NaN
+        elevationGainMeters = 0.0
+        // 闭环路线才随机切片起跑点；开放折返路线始终从起点出发
+        val startSlice = if (isClosedLoopTrack && randomStartSlice && resumeFrom == null && lapLength > 0) {
             random.nextDouble(0.0, lapLength)
         } else {
             0.0
         }
         progressMeters = if (lapLength > 0) (totalMeters + startSlice) % lapLength else 0.0
 
+        tickCount = 0L
+        manualOverride = false
+        lastPosition = null
+        lastBearing = 0.0
+        accuracyWalk = 6.5f
+        lastAltitude = baseAltitudeM
+        lastMotionCue = null
+        lastLoggedPhase = null
+        lastLoggedMessage = null
+        startedAtElapsedMs = 0L
+        startedAtWallMs = 0L
         laneFrom = 0.0
         laneTo = if (laneDriftEnabled) random.nextDouble(-LANE_DRIFT_RANGE_M, LANE_DRIFT_RANGE_M) else 0.0
         paused = false
+        wasCooldownBeforePause = false
         pauseCenter = null
         wanderPos = null
         detourActive = false
@@ -283,7 +347,8 @@ class RunCruiseEngine(
     }
 
     fun pause() = onEngineThread {
-        if (!active || detourActive) return@onEngineThread
+        if (!active || paused || detourActive) return@onEngineThread
+        wasCooldownBeforePause = _state.value.phase == RunPhase.COOLDOWN_WALK
         paused = true
         val center = lastPosition ?: positionAt(progressMeters)
         pauseCenter = center
@@ -296,7 +361,18 @@ class RunCruiseEngine(
         paused = false
         pauseCenter = null
         wanderPos = null
-        _state.value = _state.value.copy(phase = RunPhase.RUNNING, message = null)
+        val nextPhase = when {
+            settleRemainMs > 0 -> RunPhase.PRE_START_SETTLE
+            wasCooldownBeforePause -> RunPhase.COOLDOWN_WALK
+            else -> RunPhase.RUNNING
+        }
+        val nextMsg = when (nextPhase) {
+            RunPhase.PRE_START_SETTLE -> "预热中，请切到跑步 App 准备开始"
+            RunPhase.COOLDOWN_WALK -> if (earlyFinishRequested) "慢走缓冲收尾" else "达标，慢走缓冲收尾"
+            else -> null
+        }
+        wasCooldownBeforePause = false
+        _state.value = _state.value.copy(phase = nextPhase, message = nextMsg)
     }
 
     /** 临时手动接管：暂停引擎自身的坐标注入，把注入权交给摇杆 */
@@ -313,7 +389,8 @@ class RunCruiseEngine(
         val clamped = paceSecPerKm.coerceIn(180, 900)
         if (clamped == targetPaceSecPerKm) return@onEngineThread
         targetPaceSecPerKm = clamped
-        paceSim = PaceSimulator(clamped, random)
+        // 换配速不换策略：否则运行中微调配速会把前慢后快/间歇形态悄悄打回匀速
+        paceSim = PaceSimulator(clamped, random, strategy = activePaceStrategy)
         publish()
     }
 
@@ -341,10 +418,20 @@ class RunCruiseEngine(
 
     /** 响应悬浮窗「临时插点」：生成 当前点 -> 打卡点 -> 主线前方 30m 汇入点 的支线 */
     fun insertDetour(lat: Double, lng: Double) = onEngineThread {
-        // lapLength<=0（如轨迹全是重复点）时取模会得到 NaN 坐标，直接拒绝插点
-        if (!active || paused || lapLength <= 0.0) return@onEngineThread
+        // lapLength<=0（如轨迹全是重复点）或收尾慢走/暂停态拒绝插点
+        if (!active || paused || lapLength <= 0.0 || _state.value.phase == RunPhase.COOLDOWN_WALK) {
+            return@onEngineThread
+        }
+        settleRemainMs = 0L
+        detourDwellRemainMs = 0L
+        detourDwellCenter = null
         val from = lastPosition ?: positionAt(progressMeters)
-        val rejoinProgress = (progressMeters + DETOUR_REJOIN_M) % lapLength
+        val rejoinProgress = if (isClosedLoopTrack) {
+            (progressMeters + DETOUR_REJOIN_M) % lapLength
+        } else {
+            (progressMeters + if (pingPongForward) DETOUR_REJOIN_M else -DETOUR_REJOIN_M)
+                .coerceIn(0.0, lapLength)
+        }
         val rejoin = positionAt(rejoinProgress)
         val target = TrackMathUtils.LatLng(lat, lng)
         detourPath = listOf(from, target, rejoin)
@@ -361,9 +448,13 @@ class RunCruiseEngine(
         if (!active) return@onEngineThread
         if (_state.value.phase == RunPhase.COOLDOWN_WALK) return@onEngineThread
         earlyFinishRequested = true
+        settleRemainMs = 0L
+        detourDwellRemainMs = 0L
+        detourDwellCenter = null
         cooldownRemainingMs = cooldownMillis
         detourActive = false
         paused = false
+        wasCooldownBeforePause = false
         _state.value = _state.value.copy(phase = RunPhase.COOLDOWN_WALK, message = "慢走缓冲收尾")
     }
 
@@ -385,20 +476,24 @@ class RunCruiseEngine(
 
     private fun launchLoop() {
         job = scope.launch {
+            startedAtElapsedMs = env.elapsedRealtimeMs()
+            startedAtWallMs = env.wallTimeMs()
             if (!env.isMockLocationAllowed()) {
                 finish("未授权模拟位置，请在开发者选项中选中本应用", success = false)
                 return@launch
             }
-            startedAtElapsedMs = env.elapsedRealtimeMs()
-            startedAtWallMs = env.wallTimeMs()
-            // 5 秒起跑预热锚定：原地 1.5m 微漂移，不计里程，倒计时提示切入目标 App
-            settleCenter = positionAt(progressMeters)
-            settlePos = settleCenter
-            _state.value = _state.value.copy(
-                phase = RunPhase.PRE_START_SETTLE,
-                settleRemainSec = (settleMillis / 1000).toInt(),
-                message = "预热中，请切到跑步 App 准备开始"
-            )
+            if (settleMillis > 0L) {
+                // 5 秒起跑预热锚定：原地 1.5m 微漂移，不计里程，倒计时提示切入目标 App
+                settleCenter = positionAt(progressMeters)
+                settlePos = settleCenter
+                _state.value = _state.value.copy(
+                    phase = RunPhase.PRE_START_SETTLE,
+                    settleRemainSec = (settleMillis / 1000).toInt(),
+                    message = "预热中，请切到跑步 App 准备开始"
+                )
+            } else {
+                _state.value = _state.value.copy(phase = RunPhase.RUNNING, message = null)
+            }
             var lastNanos = env.nanoTime()
             while (active && isActive) {
                 delay(tickMillis)
@@ -414,10 +509,10 @@ class RunCruiseEngine(
 
     private fun tick(dtSec: Double) {
         when {
-            settleRemainMs > 0 -> tickSettle(dtSec)
+            paused -> tickPause()
             _state.value.phase == RunPhase.COOLDOWN_WALK -> tickCooldown(dtSec)
             detourDwellRemainMs > 0 -> tickDetourDwell(dtSec)
-            paused -> tickPause()
+            settleRemainMs > 0 -> tickSettle(dtSec)
             detourActive -> tickDetour(dtSec)
             else -> tickRun(dtSec)
         }
@@ -439,6 +534,7 @@ class RunCruiseEngine(
         }
         settlePos = candidate
         currentSpeedMps = random.nextDouble(0.0, 0.15)
+        lastMotionCue = null
         settleRemainMs -= (dtSec * 1000).toLong()
         _state.value = _state.value.copy(
             settleRemainSec = ((settleRemainMs + 999) / 1000).toInt().coerceAtLeast(0)
@@ -456,18 +552,18 @@ class RunCruiseEngine(
         val headingChange = TrackMathUtils.headingDelta(headingNow, headingAhead)
         val speed = sim.speedMps(totalMeters, targetMeters - totalMeters, headingChange, dtSec)
         currentSpeedMps = speed
+        // 动作线索：末段冲刺 > 热身降速 > 弯道减速 > 稳步巡航
+        lastMotionCue = when {
+            targetMeters - totalMeters < SPRINT_CUE_METERS -> MOTION_SPRINT
+            totalMeters < WARMUP_CUE_METERS -> MOTION_WARMUP
+            headingChange > PaceSimulator.TURN_HEADING_DEG -> MOTION_TURN
+            else -> MOTION_STEADY
+        }
 
         val step = speed * dtSec
-        progressMeters += step
+        advanceTrack(step, rotateLane = true)
         totalMeters += step
-        if (progressMeters >= lapLength) {
-            progressMeters -= lapLength
-            lapIndex++
-            if (laneDriftEnabled) {
-                laneFrom = laneTo
-                laneTo = random.nextDouble(-LANE_DRIFT_RANGE_M, LANE_DRIFT_RANGE_M)
-            }
-        }
+        onDistanceAdvanced()
 
         if (totalMeters >= finishThresholdMeters) {
             if (cooldownEnabled) {
@@ -481,17 +577,71 @@ class RunCruiseEngine(
         injectAt(positionAt(progressMeters), speed)
     }
 
+    private fun advanceTrack(step: Double, rotateLane: Boolean) {
+        if (lapLength <= 0.0) return
+        if (isClosedLoopTrack) {
+            progressMeters += step
+            while (progressMeters >= lapLength) {
+                progressMeters -= lapLength
+                lapIndex++
+                if (rotateLane && laneDriftEnabled) {
+                    laneFrom = laneTo
+                    laneTo = random.nextDouble(-LANE_DRIFT_RANGE_M, LANE_DRIFT_RANGE_M)
+                } else if (!rotateLane) {
+                    laneFrom = laneTo
+                }
+            }
+            return
+        }
+        // 开放路线：抵达起终点后折返，不再跨越终点瞬移回起点
+        var remaining = step
+        while (remaining > 0.0) {
+            if (pingPongForward) {
+                val room = lapLength - progressMeters
+                if (remaining < room) {
+                    progressMeters += remaining
+                    remaining = 0.0
+                } else {
+                    remaining -= room
+                    progressMeters = lapLength
+                    pingPongForward = false
+                    lapIndex++
+                    if (rotateLane && laneDriftEnabled) {
+                        laneFrom = laneTo
+                        laneTo = random.nextDouble(-LANE_DRIFT_RANGE_M, LANE_DRIFT_RANGE_M)
+                    } else if (!rotateLane) {
+                        laneFrom = laneTo
+                    }
+                }
+            } else {
+                val room = progressMeters
+                if (remaining < room) {
+                    progressMeters -= remaining
+                    remaining = 0.0
+                } else {
+                    remaining -= room
+                    progressMeters = 0.0
+                    pingPongForward = true
+                    lapIndex++
+                    if (rotateLane && laneDriftEnabled) {
+                        laneFrom = laneTo
+                        laneTo = random.nextDouble(-LANE_DRIFT_RANGE_M, LANE_DRIFT_RANGE_M)
+                    } else if (!rotateLane) {
+                        laneFrom = laneTo
+                    }
+                }
+            }
+        }
+    }
+
     private fun tickCooldown(dtSec: Double) {
         val speed = random.nextDouble(COOLDOWN_SPEED_MIN, COOLDOWN_SPEED_MAX)
         currentSpeedMps = speed
+        lastMotionCue = MOTION_COOLDOWN
         val step = speed * dtSec
-        progressMeters += step
+        advanceTrack(step, rotateLane = false)
         totalMeters += step
-        if (progressMeters >= lapLength) {
-            progressMeters -= lapLength
-            lapIndex++
-            laneFrom = laneTo
-        }
+        onDistanceAdvanced()
         cooldownRemainingMs -= (dtSec * 1000).toLong()
         if (cooldownRemainingMs <= 0) {
             finish(if (earlyFinishRequested) "已提前收尾" else "已完成目标里程", success = true)
@@ -501,6 +651,7 @@ class RunCruiseEngine(
     }
 
     private fun tickPause() {
+        lastMotionCue = null
         if (manualOverride) {
             currentSpeedMps = 0.0
             return
@@ -526,9 +677,11 @@ class RunCruiseEngine(
         val sim = paceSim ?: return
         val speed = sim.speedMps(totalMeters, targetMeters - totalMeters, 0.0, dtSec)
         currentSpeedMps = speed
+        lastMotionCue = MOTION_DETOUR
         val step = speed * dtSec
         detourProgress += step
         totalMeters += step
+        onDistanceAdvanced()
         val total = detourCumulative.last()
         // 打卡点 = 支线第 2 个点（from -> target -> rejoin）
         val targetAt = if (detourCumulative.size > 1) detourCumulative[1] else total
@@ -543,11 +696,20 @@ class RunCruiseEngine(
             injectAt(targetPoint, 0.0)
             return
         }
+        // 到达汇入点，回到主线 RUNNING；下一拍由 tickRun 判定是否达标收尾
         if (detourProgress >= total) {
-            // 到达汇入点，并回主线
             detourActive = false
-            progressMeters = detourRejoinMeters % lapLength
-            laneFrom = laneTo
+            val targetProgress = detourRejoinMeters % lapLength
+            if (isClosedLoopTrack && targetProgress < progressMeters) {
+                lapIndex++
+                if (laneDriftEnabled) {
+                    laneFrom = laneTo
+                    laneTo = random.nextDouble(-LANE_DRIFT_RANGE_M, LANE_DRIFT_RANGE_M)
+                }
+            } else {
+                laneFrom = laneTo
+            }
+            progressMeters = targetProgress
             _state.value = _state.value.copy(phase = RunPhase.RUNNING, message = null)
             injectAt(positionAt(progressMeters), speed)
             return
@@ -556,6 +718,7 @@ class RunCruiseEngine(
         val slowZone = if (detourDwellDone) 0.0 else DETOUR_DWELL_METERS
         val near = slowZone > 0 && detourProgress >= (targetAt - slowZone)
         val pos = TrackMathUtils.interpolate(detourPath, detourCumulative, detourProgress)
+        lastBearing = TrackMathUtils.bearingAt(detourPath, detourCumulative, detourProgress)
         currentSpeedMps = if (near) speed * 0.35 else speed
         injectAt(pos, currentSpeedMps)
     }
@@ -580,7 +743,12 @@ class RunCruiseEngine(
 
     private fun positionAt(progress: Double): TrackMathUtils.LatLng {
         val base = TrackMathUtils.interpolate(points, cumulative, progress)
-        val bearing = TrackMathUtils.bearingAt(points, cumulative, progress)
+        val rawBearing = TrackMathUtils.bearingAt(points, cumulative, progress)
+        val bearing = if (!isClosedLoopTrack && !pingPongForward) {
+            (rawBearing + 180.0) % 360.0
+        } else {
+            rawBearing
+        }
         lastBearing = bearing
         val lane = laneOffsetAt(progress)
         if (lane == 0.0) return base
@@ -599,10 +767,60 @@ class RunCruiseEngine(
             laneTo
         }
 
+    private fun elapsedSecNow(): Long = if (startedAtElapsedMs == 0L) {
+        0L
+    } else {
+        (env.elapsedRealtimeMs() - startedAtElapsedMs) / 1000
+    }
+
+    /** 每次里程推进后：累计正爬升 + 结算已完成的分段 */
+    private fun onDistanceAdvanced() {
+        accumulateElevation()
+        recordSplits()
+    }
+
+    /**
+     * 累计正海拔爬升：只取注入坐标所用的同一条微地形正弦波（不含逐点噪声，
+     * 否则噪声会把「微小抖动」累加成一两百米的假爬升）。
+     */
+    private fun accumulateElevation() {
+        if (lapLength <= 0.0) return
+        val fraction = (progressMeters % lapLength) / lapLength
+        val altitude = baseAltitudeM + TERRAIN_AMPLITUDE_M * sin(2 * PI * fraction)
+        val previous = lastTerrainAltitude
+        if (!previous.isNaN() && altitude > previous) elevationGainMeters += altitude - previous
+        lastTerrainAltitude = altitude
+    }
+
+    private fun recordSplits() {
+        if (splitStepMeters <= 0.0) return
+        val elapsed = elapsedSecNow()
+        while (totalMeters >= splitNextBoundary) {
+            appendSplit(splitNextBoundary - splitStartMeters, elapsed)
+            splitStartMeters = splitNextBoundary
+            splitStartElapsedSec = elapsed
+            splitNextBoundary += splitStepMeters
+        }
+    }
+
+    private fun appendSplit(distMeters: Double, elapsedSec: Long, phaseName: String = _state.value.phase.name) {
+        if (distMeters < 1.0) return
+        val duration = (elapsedSec - splitStartElapsedSec).coerceAtLeast(1L)
+        splitMarks += RunSplit(
+            idx = splitMarks.size + 1,
+            distM = distMeters.roundToInt(),
+            durSec = duration.toInt(),
+            paceSec = (duration * 1000.0 / distMeters).roundToInt(),
+            phase = phaseName
+        )
+    }
+
     private fun injectAt(position: TrackMathUtils.LatLng, speedMps: Double) {
         lastPosition = position
         val fraction = if (lapLength > 0) (progressMeters % lapLength) / lapLength else 0.0
         val altitude = TrackMathUtils.microTerrainAltitude(baseAltitudeM, fraction, random = random)
+        // 海拔在节流判断之前落盘：UI 每拍都能拿到最新值，注入频率不受影响
+        lastAltitude = altitude
         val bearing = (lastBearing + random.nextDouble(-2.0, 2.0) + 360.0) % 360.0
 
         // fix 节流：只压注入频率；UI 发布、物理积分、摇杆响应仍按 tickMillis 走。
@@ -645,7 +863,10 @@ class RunCruiseEngine(
             paceSecPerKm = pace,
             targetPaceSecPerKm = targetPaceSecPerKm,
             position = lastPosition,
-            elapsedSec = elapsed
+            elapsedSec = elapsed,
+            altitudeMeters = lastAltitude,
+            accuracyMeters = accuracyWalk,
+            motionCue = lastMotionCue
         )
         logPhaseIfChanged(next)
         _state.value = next
@@ -669,7 +890,7 @@ class RunCruiseEngine(
         val now = env.elapsedRealtimeMs()
         if (now - lastSnapshotMs < SNAPSHOT_INTERVAL_MS) return
         lastSnapshotMs = now
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             repo.saveSnapshot(
                 RunSnapshot(
                     routeId = routeId,
@@ -689,12 +910,20 @@ class RunCruiseEngine(
         if (success) env.vibrate()
         val elapsed = if (startedAtElapsedMs == 0L) 0L
         else (env.elapsedRealtimeMs() - startedAtElapsedMs) / 1000
+        lastMotionCue = null
+        // 先记收尾前所处的阶段：尾段 split 的 phase 应是收尾时的真实阶段
+        // （如 COOLDOWN_WALK），而不是置成 FINISHED 之后再取值
+        val phaseBeforeFinish = _state.value.phase.name
         _state.value = _state.value.copy(
             phase = RunPhase.FINISHED,
             speedMps = 0.0,
             elapsedSec = elapsed,
-            message = message
+            message = message,
+            motionCue = null
         )
+        // 尾段：不足一整段但 ≥50m 才记，避免把慢走最后几步算成一段配速
+        val tailMeters = totalMeters - splitStartMeters
+        if (tailMeters >= SPLIT_TAIL_MIN_M) appendSplit(tailMeters, elapsed, phaseBeforeFinish)
         val record = RunRecordEntity(
             routeId = routeId,
             routeName = routeName,
@@ -702,7 +931,10 @@ class RunCruiseEngine(
             durationSeconds = elapsed.toInt(),
             averagePaceSec = if (totalMeters > 50) (elapsed * 1000 / totalMeters).toInt() else 0,
             startedAt = startedAtWallMs,
-            status = if (success) "COMPLETED" else "ABORTED"
+            status = if (success) "COMPLETED" else "ABORTED",
+            splitsJson = RunSplitCodec.encode(splitMarks),
+            paceStrategy = activePaceStrategy.name,
+            elevationGainMeters = elevationGainMeters
         )
         repository?.let { repo ->
             // finalizeScope 不随 release() 取消，外再包 NonCancellable 双保险：

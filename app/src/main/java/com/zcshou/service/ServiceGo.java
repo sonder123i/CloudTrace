@@ -52,16 +52,17 @@ public class ServiceGo extends Service implements ILocationInjector {
     public static final String LAT_MSG_ID = "LAT_VALUE";
     public static final String ALT_MSG_ID = "ALT_VALUE";
     private final java.util.Random mRandom = new java.util.Random();
-    private long mLastInjectionLostAt = 0L;
+    private volatile long mLastInjectionLostAt = 0L;
     /* 各 provider 的上一次 fix 时间，保证注入时间戳单调（第三方 SDK 用相邻 fix 的 time 差算速度） */
-    private long mLastGpsFixTime = 0L;
-    private long mLastNetFixTime = 0L;
+    private volatile long mLastGpsFixTime = 0L;
+    private volatile long mLastNetFixTime = 0L;
     /** 上一次网络兜底 fix 的投递时刻（elapsedRealtime），用于 10s 节流 */
-    private long mLastNetFixAt = 0L;
+    private volatile long mLastNetFixAt = 0L;
     /* provider 重建限频：避免每拍都 remove/add */
-    private long mLastProviderRecoveryAt = 0L;
+    private volatile long mLastProviderRecoveryAt = 0L;
     /* GPS test provider 是否真的注册成功（未授权模拟位置时 addTestProvider 会抛异常） */
     private volatile boolean mGpsProviderReady = false;
+    private volatile boolean mNetworkProviderReady = false;
     /* 已释放注入：此后再来的 fix 直接丢弃，避免把刚摘掉的 provider 又建回来 */
     private volatile boolean mInjectionReleased = false;
     /**
@@ -70,18 +71,18 @@ public class ServiceGo extends Service implements ILocationInjector {
      * 和每 5s 广播一次造成的日志与唤醒噪声。
      */
     private volatile boolean mInjectionSuspended = false;
-    private long mLastSuspendProbeAt = 0L;
-    private double mCurLat = DEFAULT_LAT;
-    private double mCurLng = DEFAULT_LNG;
-    private double mCurAlt = DEFAULT_ALT;
-    private float mCurBea = DEFAULT_BEA;
-    private double mSpeed = 1.2;        /* 默认的速度，单位 m/s */
+    private volatile long mLastSuspendProbeAt = 0L;
+    private volatile double mCurLat = DEFAULT_LAT;
+    private volatile double mCurLng = DEFAULT_LNG;
+    private volatile double mCurAlt = DEFAULT_ALT;
+    private volatile float mCurBea = DEFAULT_BEA;
+    private volatile double mSpeed = 1.2;        /* 默认的速度，单位 m/s */
     private static final int HANDLER_MSG_ID = 0;
     private static final String SERVICE_GO_HANDLER_NAME = "ServiceGoLocation";
     private LocationManager mLocManager;
     private HandlerThread mLocHandlerThread;
     private Handler mLocHandler;
-    private boolean isStop = false;
+    private volatile boolean isStop = false;
     // run 引擎接管标志：true 时原版摇杆注入循环停摆，坐标由 ILocationInjector.injectLocation 驱动
     private volatile boolean mEngineDriven = false;
     private volatile boolean mNotificationShown = false;
@@ -139,8 +140,11 @@ public class ServiceGo extends Service implements ILocationInjector {
     @Override
     public void onDestroy() {
         isStop = true;
+        mInjectionReleased = true;
+        mGpsProviderReady = false;
+        mNetworkProviderReady = false;
         mLocHandler.removeMessages(HANDLER_MSG_ID);
-        mLocHandlerThread.quit();
+        mLocHandlerThread.quitSafely();
 
         removeTestProviderNetwork();
         removeTestProviderGPS();
@@ -160,7 +164,7 @@ public class ServiceGo extends Service implements ILocationInjector {
 
         // 点击通知回到统一首页（旧版手动界面已停用）
         Intent clickIntent = new Intent(this, RunHomeActivity.class);
-        clickIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        clickIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent clickPI = PendingIntent.getActivity(this, 1, clickIntent, PendingIntent.FLAG_IMMUTABLE);
 
         Notification notification = new NotificationCompat.Builder(this, SERVICE_GO_NOTE_CHANNEL_ID)
@@ -184,18 +188,10 @@ public class ServiceGo extends Service implements ILocationInjector {
             // 这里的Handler对象可以看作是绑定在HandlerThread子线程中，所以handlerMessage里的操作是在子线程中运行的
             @Override
             public void handleMessage(@NonNull Message msg) {
-                try {
-                    Thread.sleep(100);
-
-                    if (!isStop && !mEngineDriven) {
-                        injectStaleNetworkFix();
-                        setLocationGPS();
-
-                        sendEmptyMessage(HANDLER_MSG_ID);
-                    }
-                } catch (InterruptedException e) {
-                    XLog.e("SERVICEGO: ERROR - handleMessage");
-                    Thread.currentThread().interrupt();
+                if (!isStop && !mEngineDriven && !mInjectionReleased) {
+                    injectStaleNetworkFix();
+                    setLocationGPS();
+                    sendEmptyMessageDelayed(HANDLER_MSG_ID, 100);
                 }
             }
         };
@@ -269,15 +265,19 @@ public class ServiceGo extends Service implements ILocationInjector {
             fillGnssExtras(loc);
 
             mLocManager.setTestProviderLocation(LocationManager.GPS_PROVIDER, loc);
-        } catch (SecurityException e) {
-            notifyInjectionLost();
-            XLog.e("SERVICEGO: ERROR - setLocationGPS permission");
+        } catch (SecurityException | IllegalArgumentException e) {
+            if (recoverProviders()) {
+                XLog.i("SERVICEGO: test provider 丢失，已重建");
+            } else {
+                enterSuspension();
+            }
         } catch (Exception e) {
             XLog.e("SERVICEGO: ERROR - setLocationGPS");
         }
     }
 
     private void removeTestProviderNetwork() {
+        mNetworkProviderReady = false;
         try {
             mLocManager.removeTestProvider(LocationManager.NETWORK_PROVIDER);
         } catch (Exception ignored) {
@@ -302,7 +302,9 @@ public class ServiceGo extends Service implements ILocationInjector {
             if (!mLocManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 mLocManager.setTestProviderEnabled(LocationManager.NETWORK_PROVIDER, true);
             }
-        } catch (SecurityException e) {
+            mNetworkProviderReady = true;
+        } catch (Exception e) {
+            mNetworkProviderReady = false;
             XLog.e("SERVICEGO: ERROR - addTestProviderNetwork");
         }
     }
@@ -317,7 +319,7 @@ public class ServiceGo extends Service implements ILocationInjector {
      * - 也不会出现假网络坐标与真实基站/Wi-Fi 指纹大面积矛盾。
      */
     private void injectStaleNetworkFix() {
-        if (mLocManager == null) return;
+        if (!mNetworkProviderReady || mLocManager == null) return;
         long nowElapsed = SystemClock.elapsedRealtime();
         if (nowElapsed - mLastNetFixAt < STALE_NETWORK_FIX_INTERVAL_MS) return;
         mLastNetFixAt = nowElapsed;
@@ -332,7 +334,12 @@ public class ServiceGo extends Service implements ILocationInjector {
             stale.setVerticalAccuracyMeters(30.0f);
             stale.setSpeedAccuracyMetersPerSecond(2.0f);
             stale.setBearingAccuracyDegrees(30.0f);
-            mLastNetFixTime = Math.max(mLastNetFixTime + 1L, System.currentTimeMillis() - 3000L);
+            long targetNetTime = System.currentTimeMillis() - 3000L;
+            if (mLastNetFixTime <= 0L || Math.abs(targetNetTime - mLastNetFixTime) > 5000L) {
+                mLastNetFixTime = targetNetTime;
+            } else {
+                mLastNetFixTime = Math.max(mLastNetFixTime + 1L, targetNetTime);
+            }
             stale.setTime(mLastNetFixTime);
             // 与 time 一致地落后 3s，避免两个时间源互相矛盾
             stale.setElapsedRealtimeNanos(Math.max(1L, SystemClock.elapsedRealtimeNanos() - 3_000_000_000L));
@@ -366,11 +373,11 @@ public class ServiceGo extends Service implements ILocationInjector {
             mLocManager.setTestProviderLocation(LocationManager.GPS_PROVIDER, gps);
             mLastGpsFixTime = gps.getTime();
 
-            // 网络 provider 只给陈旧兜底（10s 一次），主力仍是 GPS
-            if (mLocManager.getAllProviders().contains(LocationManager.NETWORK_PROVIDER)) {
+            // 网络 provider 只给陈旧兜底（10s 一次），主力仍是 GPS；先用缓存标志+时间节流避免每拍 Binder IPC
+            if (mNetworkProviderReady) {
                 injectStaleNetworkFix();
             }
-        } catch (SecurityException e) {
+        } catch (SecurityException | IllegalArgumentException e) {
             // provider 可能被系统回收：限频重建，下一拍自动恢复；
             // 重建不了（多半是模拟位置授权被撤销）则挂起，交给探测逻辑恢复
             if (recoverProviders()) {

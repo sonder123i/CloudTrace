@@ -4,6 +4,7 @@
     <string name="route_share_scheme" translatable="false">CLOUDTRACE</string>
     <string name="route_import_hint">从 %1$s:// 口令导入路线</string>
     <string name="route_share_copy">复制 %1$s:// 分享口令</string>
+    <string name="widget_cloudtrace_desc">本周跑量 · 主路线 · 一键开跑</string>
     <string name="setup_mock_app_hint">开发者选项 → 选择模拟位置信息应用 → 选择「%1$s」</string>
     <string name="route_import_label">从 CLOUDTRACE:// 口令导入路线</string>
     <string name="app_author">ZCShou</string>
@@ -162,7 +163,7 @@
 
     <!-- 支持云迹邀请：只在真实跑过多次、跑够里程后出现 -->
     <string name="support_prompt_title">云迹已经陪你跑了 %1$s 公里</string>
-    <string name="support_prompt_body">已经完成了 %2$d 次。如果它确实帮到了你，欢迎请作者喝杯咖啡 ☕\n\n赞赏完全自愿，不解锁功能，也不影响使用。</string>
+    <string name="support_prompt_body">已经完成了 %1$d 次。如果它确实帮到了你，欢迎请作者喝杯咖啡 ☕\n\n赞赏完全自愿，不解锁功能，也不影响使用。</string>
     <string name="support_prompt_go">去支持</string>
     <string name="support_prompt_later">暂不</string>
     <string name="support_prompt_never">不再提示</string>
@@ -290,5 +291,8 @@
     <string name="settings_about">关于云迹</string>
     <string name="settings_about_sub">版本信息 · 开源许可与致谢</string>
     <string name="settings_footer">云迹 v%1$s · 构建信息</string>
+
+    <!-- 启动动画 · 字标副行（拉丁字母固定，不参与翻译） -->
+    <string name="splash_wordmark_subtitle" translatable="false">CLOUDTRACE</string>
 
 </resources>

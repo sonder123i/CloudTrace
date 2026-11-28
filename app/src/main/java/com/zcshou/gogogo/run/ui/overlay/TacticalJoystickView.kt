@@ -128,6 +128,9 @@ class TacticalJoystickView @JvmOverloads constructor(
         drawLockInBall(canvas, kx, ky)
     }
 
+    private val lockBodyRect = RectF()
+    private val lockArcRect = RectF()
+
     /** 锁图标直接画在球里，锁定=闭合锁，解锁=打开锁 */
     private fun drawLockInBall(canvas: Canvas, x: Float, y: Float) {
         val bodyW = ballRadius * 0.62f
@@ -135,27 +138,25 @@ class TacticalJoystickView @JvmOverloads constructor(
         val bodyTop = y - bodyH * 0.15f
         lockPaint.alpha = if (isLocked) 230 else 110
         lockPath.reset()
-        lockPath.addRoundRect(
-            RectF(x - bodyW / 2f, bodyTop, x + bodyW / 2f, bodyTop + bodyH),
-            bodyW * 0.18f, bodyW * 0.18f, Path.Direction.CW
-        )
+        lockBodyRect.set(x - bodyW / 2f, bodyTop, x + bodyW / 2f, bodyTop + bodyH)
+        lockPath.addRoundRect(lockBodyRect, bodyW * 0.18f, bodyW * 0.18f, Path.Direction.CW)
         if (isLocked) {
-            val arc = RectF(
+            lockArcRect.set(
                 x - bodyW * 0.32f,
                 bodyTop - bodyH * 0.75f,
                 x + bodyW * 0.32f,
                 bodyTop + bodyH * 0.1f
             )
-            lockPath.addArc(arc, 180f, 180f)
+            lockPath.addArc(lockArcRect, 180f, 180f)
         } else {
             // 开锁：锁梁右移、只画半圈
-            val arc = RectF(
+            lockArcRect.set(
                 x - bodyW * 0.10f,
                 bodyTop - bodyH * 0.80f,
                 x + bodyW * 0.60f,
                 bodyTop + bodyH * 0.05f
             )
-            lockPath.addArc(arc, 200f, 140f)
+            lockPath.addArc(lockArcRect, 200f, 140f)
         }
         canvas.drawPath(lockPath, lockPaint)
     }
@@ -180,17 +181,27 @@ class TacticalJoystickView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (activePointer != event.getPointerId(0)) return true
-                val dx = event.x - downX
-                val dy = event.y - downY
-                if (!moved && hypot(dx, dy) > dp(6f)) moved = true
-                updateKnob(event)
+                val idx = if (activePointer >= 0) event.findPointerIndex(activePointer) else -1
+                if (idx < 0) return true
+                val px = event.getX(idx)
+                val py = event.getY(idx)
+                if (!moved && hypot(px - downX, py - downY) > dp(6f)) moved = true
+                updateKnob(px, py)
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> {
+                val actionIdx = event.actionIndex
+                if (event.getPointerId(actionIdx) != activePointer) return true
+                parent?.requestDisallowInterceptTouchEvent(false)
+                activePointer = -1
+                if (!moved) toggleLock() else if (!isLocked) recenterAndStop()
                 return true
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 parent?.requestDisallowInterceptTouchEvent(false)
-                if (activePointer != event.getPointerId(0)) return true
+                if (activePointer < 0) return true
                 activePointer = -1
                 if (!moved) {
                     toggleLock()
@@ -203,9 +214,9 @@ class TacticalJoystickView @JvmOverloads constructor(
         return super.onTouchEvent(event)
     }
 
-    private fun updateKnob(event: MotionEvent) {
-        var dx = event.x - cx
-        var dy = event.y - cy
+    private fun updateKnob(px: Float, py: Float) {
+        var dx = px - cx
+        var dy = py - cy
         val dist = hypot(dx, dy)
         val maxTravel = travel + ballRadius * 0.55f
         if (dist > maxTravel) {
@@ -217,9 +228,7 @@ class TacticalJoystickView @JvmOverloads constructor(
         lastBearing = bearingOf(dx, dy)
         val raw = (hypot(dx, dy) / maxTravel).coerceIn(0f, 1f)
         val strength = ((raw - DEAD_ZONE) / (1f - DEAD_ZONE)).coerceIn(0f, 1f)
-        if (strength != lastStrength) {
-            lastStrength = strength
-        }
+        lastStrength = strength
         listener?.onSteer(lastBearing, strength)
         invalidate()
     }

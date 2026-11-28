@@ -1,12 +1,14 @@
 package com.zcshou.gogogo.run.ui.glass
 
+import androidx.core.graphics.ColorUtils
 import com.example.liquidglass.GlassMaterial
 import com.example.liquidglass.LiquidGlassView
+import com.zcshou.gogogo.R
 
 /**
- * V6.3 液态玻璃唯一调参入口。
+ * V6.4 液态玻璃唯一调参入口。
  *
- * 目标不是“白卡片”，而是 Apple iOS 26 的材质行为：
+ * 目标不是"白卡片"，而是 Apple iOS 26 的材质行为：
  * - 自适应染色：亮背景压一点烟灰，暗背景提一点乳白；
  * - 更低遮蔽 + 更强模糊/饱和，让背景真正参与材质；
  * - 更厚的边缘透镜（bevel / refraction）+ 极细色散；
@@ -29,6 +31,21 @@ object OpticalGlassTuning {
     /** 1.72 倍饱和，接近网页玻璃的 saturate(1.8)。 */
     const val SATURATION = 172f
 
+    // ---------------------------------------------------------------- 地图面板
+
+    /**
+     * 地图面板磨砂强度。地图有大量道路白线与水系蓝绿，模糊太重会把路网糊成一团，
+     * 太轻又压不住文字背后的高对比色块；0.34 是"能看出路网形状但读得清字"的点。
+     */
+    private const val MAP_BLUR = 0.34f
+
+    /** 地图本身饱和度就高，这里不再拉满，只做轻微提鲜。 */
+    private const val MAP_SATURATION = 126f
+
+    /** 夜间地图底色偏深，染色稍重一点点维持对比度。 */
+    private const val MAP_TINT_ALPHA_DAY = 0.60f
+    private const val MAP_TINT_ALPHA_NIGHT = 0.66f
+
     fun apply(
         view: LiquidGlassView,
         bevelDp: Float = BEVEL_DP,
@@ -43,32 +60,37 @@ object OpticalGlassTuning {
         view.enableSensorHighlight = true
         view.enableAdaptiveTint = isNight(view)
         view.blurAmount = BLUR_AMOUNT
-        view.saturation = SATURATION
+        // API 36 平台色彩管线可用时，多给的饱和度会被平台再现得更准；
+        // 不可用的机器维持原值，避免过饱和
+        view.saturation = if (GlassApi36Support.probe()) SATURATION + 6f else SATURATION
         view.enableShadow = false
         view.enablePressEffect = true
     }
 
     /**
-     * 地图页面板专用：地图本身有大量道路/水系颜色，饱和度不能拉满，
-     * 否则一层薄玻璃会把地图的蓝绿放大成“彩色玻璃”。这里降饱和、加重遮蔽。
+     * 地图页面板专用配方。
+     *
+     * ## V6.4 彻底移除「90% 中性实底」
+     *
+     * 旧实现为压住 `TextureMapView` 捕获回读的蓝色偏移，把子 View 背景设成
+     * `0xE6F5F7FA` / `0xE61C1C1E`（90% 实底）。蓝是压住了，玻璃也变成了一块贴纸：
+     * 边缘折射、地图路网、水系颜色全被盖死。
+     *
+     * 现在偏色改在**采样环节**校正（见 [MapBackdropCapture] 的去蓝矩阵），
+     * 玻璃只需要一个 58%~66% 的冷雾染色 + 共享低分辨率捕获即可兼顾通透与可读性。
+     * 调用方必须先 `MapBackdropCapture.bind(view, mapView)`。
      */
     fun applyMapPanel(view: LiquidGlassView) {
         apply(view, bevelDp = 14f, refractionDp = 8f)
-        view.blurAmount = 0.20f
-        view.saturation = 118f
+        view.blurAmount = MAP_BLUR
+        view.saturation = MAP_SATURATION
         view.enableAdaptiveTint = false
-        // TextureMapView 的捕获带蓝色偏移，单靠 absorption tint 无法中和；
-        // 在内容层加 90% 中性底衬，保留边缘折射/高光，同时止住“蓝玻璃”。
-        val child = (view as? android.view.ViewGroup)?.getChildAt(0)
-        if (child != null) {
-            val density = view.resources.displayMetrics.density
-            child.background = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = 24f * density
-                setColor(
-                    if (isNight(view)) 0xE61C1C1E.toInt() else 0xE6F5F7FA.toInt()
-                )
-            }
-        }
+        MapBackdropCapture.applyBlurProfile(view)
+
+        val night = isNight(view)
+        val alpha = if (night) MAP_TINT_ALPHA_NIGHT else MAP_TINT_ALPHA_DAY
+        val base = view.context.getColor(R.color.dr_editor_optical_tint)
+        view.glassTint = ColorUtils.setAlphaComponent(base, (alpha * 255f).toInt())
     }
 
     private fun isNight(view: LiquidGlassView): Boolean {

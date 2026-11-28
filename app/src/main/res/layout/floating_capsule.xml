@@ -4,7 +4,10 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:orientation="vertical">
+    android:clipChildren="false"
+    android:clipToPadding="false"
+    android:orientation="vertical"
+    android:padding="8dp">
 
     <!-- 收起态：宽度自适应的磨砂迷你药丸。
          外壳用 CapsuleShellView 而不是 FrameLayout：它在子视图画完后叠加边缘流光，
@@ -12,34 +15,36 @@
     <com.zcshou.gogogo.run.ui.overlay.CapsuleShellView
         android:id="@+id/capsuleShell"
         android:layout_width="wrap_content"
-        android:layout_height="38dp">
+        android:layout_height="40dp"
+        android:elevation="8dp">
 
         <LinearLayout
             android:id="@+id/capsuleBar"
             android:layout_width="wrap_content"
             android:layout_height="match_parent"
             android:gravity="center_vertical"
-            android:minWidth="144dp"
+            android:minWidth="148dp"
             android:orientation="horizontal"
             android:paddingStart="6dp"
             android:paddingEnd="14dp">
 
             <com.zcshou.gogogo.run.ui.overlay.RingProgressView
                 android:id="@+id/capsuleRing"
-                android:layout_width="26dp"
-                android:layout_height="26dp" />
+                android:layout_width="28dp"
+                android:layout_height="28dp" />
 
             <TextView
                 android:id="@+id/capsuleText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
+                android:layout_marginStart="7dp"
+                android:fontFamily="sans-serif-medium"
                 android:fontFeatureSettings="tnum"
                 android:includeFontPadding="false"
                 android:maxLines="1"
                 android:text="待命"
                 android:textColor="@color/dr_overlay_text_primary"
-                android:textSize="11sp" />
+                android:textSize="12sp" />
         </LinearLayout>
     </com.zcshou.gogogo.run.ui.overlay.CapsuleShellView>
 
@@ -47,37 +52,39 @@
          同样是 CapsuleShellView：玻璃背景 + 边缘流光都在这块圆角区域上。 -->
     <com.zcshou.gogogo.run.ui.overlay.CapsuleShellView
         android:id="@+id/capsuleActions"
-        android:layout_width="288dp"
+        android:layout_width="264dp"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
+        android:elevation="10dp"
         android:visibility="gone">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="12dp">
+            android:padding="11dp">
 
         <LinearLayout
             android:id="@+id/hubHeader"
             android:layout_width="match_parent"
-            android:layout_height="30dp"
+            android:layout_height="28dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
             <View
                 android:id="@+id/hubDot"
-                android:layout_width="6dp"
-                android:layout_height="6dp"
+                android:layout_width="7dp"
+                android:layout_height="7dp"
                 android:background="@drawable/bg_status_dot" />
 
             <TextView
                 android:id="@+id/hubStatus"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="6dp"
+                android:layout_marginStart="7dp"
                 android:layout_weight="1"
                 android:ellipsize="end"
+                android:fontFamily="sans-serif-medium"
                 android:maxLines="1"
                 android:text="模拟运行中 · 已接管"
                 android:textColor="@color/dr_overlay_text_primary"
@@ -85,27 +92,63 @@
 
             <ImageView
                 android:id="@+id/btnHubCollapse"
-                android:layout_width="30dp"
-                android:layout_height="30dp"
+                android:layout_width="28dp"
+                android:layout_height="28dp"
                 android:background="@drawable/bg_overlay_round"
                 android:contentDescription="收起"
                 android:padding="8dp"
-                android:src="@drawable/ic_xmark"
+                android:src="@drawable/ic_chevron_up"
                 android:tint="@color/dr_overlay_text_secondary"
                 tools:ignore="UseAppTint" />
+        </LinearLayout>
+
+        <!-- 实时遥测行：运动线索 · 海拔 · 精度 · 计步脉搏点（18dp 极克制） -->
+        <LinearLayout
+            android:id="@+id/capsuleTelemetry"
+            android:layout_width="match_parent"
+            android:layout_height="18dp"
+            android:layout_marginTop="1dp"
+            android:baselineAligned="false"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/capsuleTelemetryText"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:fontFeatureSettings="tnum"
+                android:maxLines="1"
+                android:text="稳步巡航 · 海拔 55m · ±6m"
+                android:textColor="@color/dr_overlay_text_secondary"
+                android:textSize="10sp" />
+
+            <View
+                android:id="@+id/capsuleStepDot"
+                android:layout_width="6dp"
+                android:layout_height="6dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_status_dot"
+                android:visibility="gone" />
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="5dp"
             android:orientation="horizontal">
 
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:orientation="vertical">
+                android:background="@drawable/bg_overlay_tile"
+                android:orientation="vertical"
+                android:paddingStart="8dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="6dp">
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -116,15 +159,15 @@
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="28dp"
+                    android:layout_height="27dp"
                     android:layout_marginTop="2dp"
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
                     <TextView
                         android:id="@+id/btnPaceMinus"
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
                         android:background="@drawable/bg_overlay_recess"
                         android:gravity="center"
                         android:text="−"
@@ -137,17 +180,18 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
+                        android:fontFamily="sans-serif-medium"
                         android:fontFeatureSettings="tnum"
                         android:gravity="center"
                         android:text="--"
                         android:textColor="@color/dr_overlay_ice"
-                        android:textSize="16sp"
+                        android:textSize="14sp"
                         android:textStyle="bold" />
 
                     <TextView
                         android:id="@+id/btnPacePlus"
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
                         android:background="@drawable/bg_overlay_recess"
                         android:gravity="center"
                         android:text="+"
@@ -160,9 +204,14 @@
             <LinearLayout
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="10dp"
+                android:layout_marginStart="8dp"
                 android:layout_weight="1"
-                android:orientation="vertical">
+                android:background="@drawable/bg_overlay_tile"
+                android:orientation="vertical"
+                android:paddingStart="8dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="8dp"
+                android:paddingBottom="6dp">
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -173,15 +222,15 @@
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="28dp"
+                    android:layout_height="27dp"
                     android:layout_marginTop="2dp"
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
                     <TextView
                         android:id="@+id/btnDistMinus"
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
                         android:background="@drawable/bg_overlay_recess"
                         android:gravity="center"
                         android:text="−"
@@ -194,17 +243,18 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
+                        android:fontFamily="sans-serif-medium"
                         android:fontFeatureSettings="tnum"
                         android:gravity="center"
                         android:text="3.0km"
                         android:textColor="@color/dr_overlay_ice"
-                        android:textSize="16sp"
+                        android:textSize="14sp"
                         android:textStyle="bold" />
 
                     <TextView
                         android:id="@+id/btnDistPlus"
-                        android:layout_width="28dp"
-                        android:layout_height="28dp"
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
                         android:background="@drawable/bg_overlay_recess"
                         android:gravity="center"
                         android:text="+"
@@ -218,15 +268,16 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
+            android:layout_marginTop="6dp"
             android:orientation="horizontal">
 
             <TextView
                 android:id="@+id/btnCapsulePause"
                 android:layout_width="0dp"
-                android:layout_height="38dp"
+                android:layout_height="34dp"
                 android:layout_weight="1"
                 android:background="@drawable/bg_overlay_recess"
+                android:fontFamily="sans-serif-medium"
                 android:gravity="center"
                 android:text="暂停"
                 android:textColor="@color/dr_overlay_text_primary"
@@ -240,6 +291,7 @@
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
                 android:background="@drawable/bg_overlay_recess"
+                android:fontFamily="sans-serif-medium"
                 android:gravity="center"
                 android:text="插点"
                 android:textColor="@color/dr_overlay_ice"
@@ -253,6 +305,7 @@
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
                 android:background="@drawable/bg_overlay_recess"
+                android:fontFamily="sans-serif-medium"
                 android:gravity="center"
                 android:text="收尾"
                 android:textColor="@color/dr_overlay_ice"
@@ -264,47 +317,54 @@
             android:id="@+id/btnCapsuleManual"
             style="@style/Widget.App.Button.Secondary"
             android:layout_width="match_parent"
-            android:layout_height="34dp"
-            android:layout_marginTop="6dp"
+            android:layout_height="32dp"
+            android:layout_marginTop="5dp"
             android:text="临时手动接管"
             android:textColor="@color/dr_overlay_ice"
-            app:backgroundTint="@color/dr_overlay_recess"
+            app:backgroundTint="@color/dr_overlay_tonal_bg"
+            app:cornerRadius="12dp"
             app:icon="@drawable/ic_crosshair"
             app:iconGravity="textStart"
             app:iconPadding="8dp"
-            app:iconTint="@color/dr_overlay_ice" />
+            app:iconTint="@color/dr_overlay_ice"
+            app:rippleColor="@color/dr_overlay_ripple"
+            app:strokeColor="@color/dr_overlay_tile_stroke"
+            app:strokeWidth="1dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnHubStopSim"
             style="@style/Widget.App.Button.Danger"
             android:layout_width="match_parent"
-            android:layout_height="36dp"
-            android:layout_marginTop="6dp"
+            android:layout_height="32dp"
+            android:layout_marginTop="4dp"
             android:text="结束定位并关闭"
             app:backgroundTint="@color/dr_overlay_danger_bg"
+            app:cornerRadius="12dp"
             app:icon="@drawable/ic_stop"
             app:iconGravity="textStart"
             app:iconPadding="8dp"
-            app:iconTint="@color/dr_overlay_danger" />
+            app:iconTint="@color/dr_overlay_danger"
+            app:rippleColor="@color/dr_overlay_ripple" />
         </LinearLayout>
     </com.zcshou.gogogo.run.ui.overlay.CapsuleShellView>
 
     <!-- 手动接管形态：紧凑战术摇杆（同一套磨砂玻璃 + 流光） -->
     <com.zcshou.gogogo.run.ui.overlay.CapsuleShellView
         android:id="@+id/capsuleRoamPanel"
-        android:layout_width="210dp"
-        android:layout_height="250dp"
+        android:layout_width="216dp"
+        android:layout_height="258dp"
         android:layout_marginTop="6dp"
+        android:elevation="10dp"
         android:visibility="gone">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
-            android:paddingStart="10dp"
-            android:paddingTop="6dp"
-            android:paddingEnd="10dp"
-            android:paddingBottom="10dp">
+            android:paddingStart="12dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="12dp"
+            android:paddingBottom="12dp">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -343,8 +403,8 @@
                 android:layout_marginStart="6dp"
                 android:background="@drawable/bg_overlay_round"
                 android:contentDescription="收起"
-                android:padding="7dp"
-                android:src="@drawable/ic_xmark"
+                android:padding="8dp"
+                android:src="@drawable/ic_chevron_up"
                 android:tint="@color/dr_overlay_text_secondary"
                 tools:ignore="UseAppTint" />
         </LinearLayout>
@@ -352,8 +412,10 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:orientation="horizontal">
+            android:layout_marginTop="4dp"
+            android:background="@drawable/bg_overlay_tile"
+            android:orientation="horizontal"
+            android:padding="3dp">
 
             <TextView
                 android:id="@+id/hubGearWalk"

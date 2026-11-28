@@ -20,6 +20,7 @@
         android:id="@+id/homeScroll"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:clipChildren="false"
         android:clipToPadding="false"
         android:fillViewport="true"
         android:paddingBottom="124dp"
@@ -35,9 +36,17 @@
             android:paddingEnd="16dp">
 
             <!-- 大标题 + 路线数量 -->
+            <!--
+                elevation 8dp 的唯一目的：把这一行（连同鲸鲸角标里向下溢出的台词气泡）
+                抬到下方 weekCard 玻璃条之上。本行没有 background，不会因此产生投影。
+                删掉它气泡下半截会被玻璃条盖住，只剩一行字的上半部分。
+            -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:elevation="8dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 android:paddingTop="6dp"
@@ -74,6 +83,14 @@
                     android:text="0 条路线"
                     android:textColor="@color/pf_text_secondary"
                     android:textSize="11sp" />
+
+                <!-- 迷你鲸鲸角标：有路线时鲸鲸常驻这里（仅 FULL / LIGHT 显示） -->
+                <com.zcshou.gogogo.mascot.MascotMiniBadgeView
+                    android:id="@+id/homeMiniMascot"
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_marginStart="8dp"
+                    android:visibility="gone" />
             </LinearLayout>
 
             <!-- 一行紧凑的玻璃信息条：本周累计 + 完成次数 + 战报入口 -->
@@ -91,6 +108,7 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="52dp"
+                    android:baselineAligned="false"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
                     android:paddingStart="16dp"
@@ -144,6 +162,27 @@
                         android:layout_height="1dp"
                         android:layout_weight="1" />
 
+                    <!-- 周目标迷你进度环：长按本卡片可改目标 -->
+                    <com.zcshou.gogogo.run.ui.widget.WeeklyGoalRingView
+                        android:id="@+id/weekGoalRing"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:layout_marginEnd="8dp" />
+
+                    <TextView
+                        android:id="@+id/weekStreakBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="22dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/bg_capsule"
+                        android:fontFeatureSettings="tnum"
+                        android:gravity="center"
+                        android:paddingStart="7dp"
+                        android:paddingEnd="7dp"
+                        android:textColor="@color/pf_text_secondary"
+                        android:textSize="10sp"
+                        android:visibility="gone" />
+
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -173,12 +212,18 @@
                 android:textSize="12sp"
                 android:visibility="gone" />
 
-            <!-- 我的路线：右侧保留一个常驻的「导入口令」入口，好友发来口令可一步添加 -->
+            <!--
+                我的路线：标题行只留纯标签，不再并排任何按钮 —— 11sp 的分区标题旁边
+                压一颗 32dp 实心胶囊，会把整行撑高、上方留出一条空带，标题看起来像在
+                为按钮让位。
+                「导入口令」改成快选胶囊右端的固定小图标（细分隔线隔开，chips 在它左边
+                滚动），既保留「可点」的实体感，又完全不额外占一条行高。
+            -->
             <LinearLayout
                 android:id="@+id/routeListHeader"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="12dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -190,22 +235,6 @@
                     android:text="我的路线"
                     android:textColor="@color/pf_text_secondary"
                     android:textSize="11sp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnImportShare"
-                    style="@style/Widget.App.Button.Compact"
-                    android:layout_width="wrap_content"
-                    android:layout_height="32dp"
-                    android:minWidth="0dp"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="12dp"
-                    android:text="导入口令"
-                    android:textSize="11sp"
-                    app:icon="@drawable/ic_import"
-                    app:iconGravity="textStart"
-                    app:iconPadding="5dp"
-                    app:iconSize="14dp"
-                    app:iconTint="@color/pf_text_primary" />
             </LinearLayout>
 
             <!-- V5.2 横向玻璃透镜轨道：外层高透长胶囊 + 内层弹簧选中透镜 -->
@@ -222,24 +251,74 @@
                 app:lgInteractive="false"
                 app:lgLens="true">
 
-                <HorizontalScrollView
-                    android:id="@+id/routeChipScrollView"
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:clipToPadding="false"
-                    android:paddingStart="16dp"
-                    android:paddingEnd="16dp"
-                    android:scrollbars="none">
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
-                    <LinearLayout
-                        android:id="@+id/routeChipRow"
+                    <HorizontalScrollView
+                        android:id="@+id/routeChipScrollView"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:clipToPadding="false"
+                        android:paddingStart="16dp"
+                        android:paddingEnd="6dp"
+                        android:scrollbars="none">
+
+                        <LinearLayout
+                            android:id="@+id/routeChipRow"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal"
+                            android:paddingTop="4dp"
+                            android:paddingEnd="16dp"
+                            android:paddingBottom="4dp" />
+                    </HorizontalScrollView>
+
+                    <View
+                        android:layout_width="0.5dp"
+                        android:layout_height="16dp"
+                        android:background="@color/pf_panel_stroke" />
+
+                    <FrameLayout
+                        android:id="@+id/btnImportShare"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingTop="4dp"
-                        android:paddingBottom="4dp" />
-                </HorizontalScrollView>
+                        android:background="?android:attr/selectableItemBackgroundBorderless"
+                        android:clickable="true"
+                        android:contentDescription="导入口令"
+                        android:focusable="true"
+                        android:paddingStart="9dp"
+                        android:paddingTop="10dp"
+                        android:paddingEnd="11dp"
+                        android:paddingBottom="10dp">
+
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <ImageView
+                                android:layout_width="14dp"
+                                android:layout_height="14dp"
+                                android:importantForAccessibility="no"
+                                android:src="@drawable/ic_import"
+                                app:tint="@color/pf_text_primary" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="4dp"
+                                android:text="导入"
+                                android:textColor="@color/pf_text_primary"
+                                android:textSize="11sp" />
+                        </LinearLayout>
+                    </FrameLayout>
+                </LinearLayout>
             </com.zcshou.gogogo.run.ui.glass.LiquidGlassContainer>
 
             <!-- 当前主路线卡（液态玻璃） -->
@@ -465,11 +544,82 @@
                 </LinearLayout>
             </com.zcshou.gogogo.run.ui.glass.LiquidGlassContainer>
 
+            <!-- 支持云迹：常驻底部入口，不用等弹窗也能主动去赞赏 -->
+            <com.zcshou.gogogo.run.ui.glass.LiquidGlassContainer
+                android:id="@+id/homeSupportCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:clickable="true"
+                android:elevation="0dp"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                app:lgBevelWidth="5dp"
+                app:lgCaustics="false"
+                app:lgCornerRadius="18dp"
+                app:lgMatte="true">
+
+                <!--
+                    这里不能加 clickable/focusable：内层一旦可点就会自己消费触摸事件，
+                    父容器 homeSupportCard 的 OnClickListener 永远收不到，表现为「点了没反应」。
+                    水波纹交给父容器的 foreground，整块卡片都是点击热区。
+                -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="16dp"
+                    android:paddingTop="14dp"
+                    android:paddingEnd="14dp"
+                    android:paddingBottom="14dp">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_heart_line"
+                        app:tint="@color/pf_text_primary" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="12dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_support_title"
+                            android:textColor="@color/pf_text_primary"
+                            android:textSize="14sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/about_support_subtitle"
+                            android:textColor="@color/pf_text_secondary"
+                            android:textSize="11sp" />
+                    </LinearLayout>
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginStart="8dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_chevron_right"
+                        app:tint="@color/pf_text_tertiary" />
+                </LinearLayout>
+            </com.zcshou.gogogo.run.ui.glass.LiquidGlassContainer>
+
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center_horizontal"
-                android:layout_marginTop="4dp"
+                android:layout_marginTop="10dp"
                 android:layout_marginBottom="8dp"
                 android:text="所有轨迹仅保存在本机"
                 android:textColor="@color/pf_text_tertiary"

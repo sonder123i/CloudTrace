@@ -95,8 +95,15 @@ class UpdateDownloadService : Service() {
         manager.runDownload()
         scope.coroutineContext.cancelChildren()
         scope.launch {
+            var lastNotifyAt = 0L
+            var lastPhase: UpdateManager.Phase? = null
             manager.state.collect { state ->
-                runCatching { notifications.notify(NOTIFICATION_ID, notification(state)) }
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (!state.active || state.phase != lastPhase || now - lastNotifyAt >= 400L) {
+                    lastNotifyAt = now
+                    lastPhase = state.phase
+                    runCatching { notifications.notify(NOTIFICATION_ID, notification(state)) }
+                }
                 if (!state.active) {
                     stopForegroundCompat()
                     stopSelf()
@@ -104,6 +111,17 @@ class UpdateDownloadService : Service() {
             }
         }
         return START_NOT_STICKY
+    }
+
+    /** Android 14（targetSdk 34）走 1 参版本：不覆写会让超时静默走过场、来不及优雅暂停 */
+    override fun onTimeout(startId: Int) {
+        onTimeout(startId, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        manager.pauseDownload()
+        stopForegroundCompat()
+        stopSelf()
     }
 
     private fun startForegroundCompat(notification: Notification) {

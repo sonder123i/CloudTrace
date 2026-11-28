@@ -85,3 +85,7 @@ go_run.db
 # UI Automator dumps & debug screenshots left in repo root
 /*.xml
 /*.png
+.drawai-cache/
+.drawai-motion/
+cloudtrace-promo.drawai*
+promo/

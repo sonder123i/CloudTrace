@@ -67,6 +67,71 @@
         android:progressTint="@color/pf_volt"
         android:thumbTint="@color/pf_on_primary" />
 
+    <!-- 配速策略：匀速 / 前慢后快 / 间歇变速 -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="配速策略"
+        android:textColor="@color/pf_text_primary"
+        android:textSize="13sp" />
+
+    <LinearLayout
+        android:id="@+id/strategyRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/strategy0"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginEnd="6dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="匀速"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/strategy1"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginEnd="6dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="前慢后快"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/strategy2"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="间歇变速"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <com.zcshou.gogogo.run.ui.widget.PaceStrategySparklineView
+        android:id="@+id/strategySparkline"
+        android:layout_width="match_parent"
+        android:layout_height="46dp"
+        android:layout_marginTop="8dp" />
+
+    <TextView
+        android:id="@+id/tvEta"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:fontFeatureSettings="tnum"
+        android:text="预计用时 17分05秒 · 约 18:47 完成"
+        android:textColor="@color/pf_text_secondary"
+        android:textSize="11sp" />
+
     <Switch
         android:id="@+id/switchDrift"
         android:layout_width="match_parent"

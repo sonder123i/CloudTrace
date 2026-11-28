@@ -76,7 +76,6 @@ import com.zcshou.gogogo.run.engine.TrackTemplates
 import com.zcshou.gogogo.run.engine.TrackMathUtils.LatLng as Wgs
 import com.zcshou.gogogo.run.engine.toWgsJson
 import com.zcshou.gogogo.run.guard.RealLocationSampler
-import com.zcshou.gogogo.run.ui.glass.DeepRunGlassManager
 import com.zcshou.gogogo.run.ui.glass.GlassDialogs
 import com.zcshou.gogogo.run.ui.glass.LiquidGlassContainer
 import com.zcshou.gogogo.run.ui.overlay.FiberTrail
@@ -111,9 +110,15 @@ class RouteEditorActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_INITIAL_MODE = "initial_mode"
+        /** 二次编辑：载入既有路线（id > 0 时进入编辑模式） */
+        const val EXTRA_EDIT_ROUTE_ID = "edit_route_id"
         const val MODE_PRESET = "preset"
         const val MODE_TRACK = "track"
         const val MODE_FREE = "free"
+
+        fun editIntent(context: android.content.Context, routeId: Long): android.content.Intent =
+            android.content.Intent(context, RouteEditorActivity::class.java)
+                .putExtra(EXTRA_EDIT_ROUTE_ID, routeId)
 
         private const val DRAFT_PREFS = "pf_route_draft"
         private const val DRAFT_KEY = "draft"
@@ -177,8 +182,10 @@ class RouteEditorActivity : AppCompatActivity() {
     private lateinit var layerSwitcher: View
     private lateinit var btnLocateMe: View
 
-    private val suggestionSearch by lazy { SuggestionSearch.newInstance() }
-    private val routeSearch by lazy { RoutePlanSearch.newInstance() }
+    private val suggestionSearchDelegate = lazy { SuggestionSearch.newInstance() }
+    private val suggestionSearch by suggestionSearchDelegate
+    private val routeSearchDelegate = lazy { RoutePlanSearch.newInstance() }
+    private val routeSearch by routeSearchDelegate
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var mode = EditMode.PRESET
@@ -232,6 +239,15 @@ class RouteEditorActivity : AppCompatActivity() {
     private var draftSuppressed = false
     private var restoringDraft = false
 
+    // --- 二次编辑既有路线 ---
+    /** 非 0 表示正在编辑该 id 的既有路线，保存时可选「覆盖」或「另存为」 */
+    private var editingRouteId = 0L
+    private var editingRoute: RunRouteEntity? = null
+    /** 载入时保存的锚点（TRACK/ROAD_SNAP 模式还原拖拽节点用） */
+    private var editingAnchors: List<Wgs> = emptyList()
+    /** GPX 导入得到的真实海拔剖面（与 densePoints 等长）；其它来源为 null */
+    private var importedElevationProfile: List<Double>? = null
+
     private val numberIconCache = mutableMapOf<Int, BitmapDescriptor>()
     private val distanceIconCache = mutableMapOf<String, BitmapDescriptor>()
     private val baseLapCache = mutableMapOf<String, Double>()
@@ -279,15 +295,17 @@ class RouteEditorActivity : AppCompatActivity() {
      * @return 是否超限 + 内容；超限时内容为 null
      */
     private fun readBounded(input: java.io.InputStream): Pair<Boolean, String?> {
-        val buffer = ByteArray(MAX_GPX_BYTES + 1)
+        val output = java.io.ByteArrayOutputStream(8192)
+        val chunk = ByteArray(8192)
         var total = 0
-        while (total < buffer.size) {
-            val read = input.read(buffer, total, buffer.size - total)
+        while (true) {
+            val read = input.read(chunk)
             if (read < 0) break
             total += read
+            if (total > MAX_GPX_BYTES) return true to null
+            output.write(chunk, 0, read)
         }
-        return if (total > MAX_GPX_BYTES) true to null
-        else false to String(buffer, 0, total, Charsets.UTF_8)
+        return false to output.toString(Charsets.UTF_8.name())
     }
 
     private val locationPermission =
@@ -318,11 +336,78 @@ class RouteEditorActivity : AppCompatActivity() {
         renderSearchHistory()
 
         if (savedInstanceState == null) {
-            if (!restoreDraftIfNeeded()) {
+            val editId = intent.getLongExtra(EXTRA_EDIT_ROUTE_ID, 0L)
+            if (editId > 0L) {
+                // 二次编辑优先于草稿：用户是从某条具体路线点进来的，草稿不应抢走焦点
+                loadRouteForEditing(editId)
+            } else if (!restoreDraftIfNeeded()) {
                 locateMe(auto = true)
             }
         } else {
             locateMe(auto = true)
+        }
+    }
+
+    /**
+     * 载入既有路线进入编辑模式。
+     *
+     * - TRACK / ROAD_SNAP 且 `anchorNodesJson` 非空：还原全部可拖拽锚点，便于微调节点；
+     * - 其它模式（操场套模 / GPX / 口令 / 漫游录制）：载入高密度轨迹，提供
+     *   「点击节点设新起点」「反转方向」这类整体操作。
+     */
+    private fun loadRouteForEditing(routeId: Long) {
+        lifecycleScope.launch {
+            val route = repository.getRoute(routeId)
+            if (route == null) {
+                toast("路线已删除，无法编辑")
+                finish()
+                return@launch
+            }
+            if (isFinishing || isDestroyed) return@launch
+            val decoded = withContext(Dispatchers.Default) {
+                TrackJsonCodec.decode(route.denseWaypointsJson)
+            }
+            if (decoded.size < 2) {
+                toast("路线轨迹数据不足，无法编辑")
+                finish()
+                return@launch
+            }
+            editingRouteId = route.id
+            editingRoute = route
+            anchors.clear()
+            freehandStrokes.clear()
+            currentStroke.clear()
+            densePoints = decoded
+            lapMeters = TrackMathUtils.cumulativeDistances(decoded).last()
+            isClosed = route.isClosedLoop
+            isClockwise = route.isClockwise
+            buildMode = route.buildMode
+            sourceHint = route.name
+
+            // TRACK / ROAD_SNAP 才有真正的「锚点」概念；其它模式只还原密集轨迹
+            val anchorList = runCatching {
+                TrackJsonCodec.decode(route.anchorNodesJson)
+            }.getOrDefault(emptyList())
+            editingAnchors = anchorList
+            if (anchorList.size >= 2 &&
+                (route.buildMode == "TRACK_SPLINE" || route.buildMode == "ROAD_SNAP")
+            ) {
+                anchors.addAll(anchorList)
+                mode = EditMode.TRACK
+            } else {
+                mode = EditMode.GPX
+            }
+            updateModeUi()
+            refreshUi()
+            centerOn(decoded[decoded.size / 2])
+            status.text = String.format(
+                Locale.US,
+                "编辑「%s」· 单圈 %.0f m · %s",
+                route.name,
+                lapMeters,
+                if (anchors.size >= 2) "${anchors.size} 个锚点可拖拽" else "可点节点设新起点"
+            )
+            toast("已载入「${route.name}」，可微调后保存")
         }
     }
 
@@ -331,8 +416,8 @@ class RouteEditorActivity : AppCompatActivity() {
         baiduMap = mapView.map
         editorTopPanel = findViewById(R.id.editorTopPanel)
         (editorTopPanel as? com.example.liquidglass.LiquidGlassView)?.apply {
-            backdropSource = mapView
-            com.zcshou.gogogo.run.ui.glass.GlassRenderGate.register(this)
+            com.zcshou.gogogo.run.ui.glass.MapBackdropCapture.bind(this, mapView)
+            com.zcshou.gogogo.run.ui.glass.GlassRenderGate.registerMapPanel(this)
             com.zcshou.gogogo.run.ui.glass.OpticalGlassTuning.applyMapPanel(this)
         }
         reticle = findViewById(R.id.opticalReticle)
@@ -355,8 +440,8 @@ class RouteEditorActivity : AppCompatActivity() {
         panelPresetLocked = findViewById(R.id.panelPresetLocked)
         editorBottomDock = findViewById(R.id.editorBottomDock)
         (editorBottomDock as? com.example.liquidglass.LiquidGlassView)?.apply {
-            backdropSource = mapView
-            com.zcshou.gogogo.run.ui.glass.GlassRenderGate.register(this)
+            com.zcshou.gogogo.run.ui.glass.MapBackdropCapture.bind(this, mapView)
+            com.zcshou.gogogo.run.ui.glass.GlassRenderGate.registerMapPanel(this)
             com.zcshou.gogogo.run.ui.glass.OpticalGlassTuning.applyMapPanel(this)
         }
         dockHeader = findViewById(R.id.dockHeader)
@@ -448,8 +533,8 @@ class RouteEditorActivity : AppCompatActivity() {
         baiduMap.setOnMapLoadedCallback {
             mapReady = true
             repositionMapAttribution()
-            // 地图引擎就绪后强制重套皮肤，确保深色模式不会残留亮白底图
-            MapStyleHelper.applyForTheme(mapView)
+            // 地图引擎就绪后按当前选定图层重套皮肤，防止深色底图残留或覆盖卫星/标准图层
+            applyLayer(mapLayer)
             updateCrosshair()
         }
         mapView.postDelayed({
@@ -490,18 +575,14 @@ class RouteEditorActivity : AppCompatActivity() {
         baiduMap.setOnMapStatusChangeListener(object : BaiduMap.OnMapStatusChangeListener {
             override fun onMapStatusChangeStart(status: MapStatus) = Unit
 
-            override fun onMapStatusChangeStart(status: MapStatus, reason: Int) {
-                // 手指拖动/缩放期间把玻璃采样降到 0.25x，避免每帧重拍背景
-                DeepRunGlassManager.setMapInteracting(true)
-            }
+            override fun onMapStatusChangeStart(status: MapStatus, reason: Int) = Unit
 
             override fun onMapStatusChange(status: MapStatus) {
-                com.zcshou.gogogo.run.ui.glass.GlassRenderGate.requestRefresh(260L)
+                com.zcshou.gogogo.run.ui.glass.GlassRenderGate.requestMapRefresh(260L)
                 if (mode == EditMode.PRESET && presetStage == PresetStage.ALIGN) updateCrosshair()
             }
 
             override fun onMapStatusChangeFinish(status: MapStatus) {
-                DeepRunGlassManager.setMapInteracting(false)
                 if (mode == EditMode.PRESET && presetStage == PresetStage.ALIGN) updateCrosshair()
                 refreshDockBackdrop()
             }
@@ -593,6 +674,11 @@ class RouteEditorActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnClose).setOnClickListener { finish() }
         btnUndo.setOnClickListener { undo() }
         findViewById<TextView>(R.id.btnReverse).setOnClickListener { reverseDirection() }
+        // 长按反转按钮 = 以地图中心最近节点重设起点（闭环专属的整体微调）
+        findViewById<View>(R.id.btnReverse).setOnLongClickListener {
+            resetStartToNearestPoint()
+            true
+        }
         btnClear.setOnClickListener { clearAll() }
         btnSave.setOnClickListener { saveRoute() }
         btnPreview.setOnClickListener { previewRun() }
@@ -617,13 +703,28 @@ class RouteEditorActivity : AppCompatActivity() {
         mapView.onPause()
     }
 
+    private var ghostDescriptor: BitmapDescriptor? = null
+
     override fun onDestroy() {
         stopPreview()
         segmentTimeoutJob?.cancel()
         lockPulse?.cancel()
         mainHandler.removeCallbacksAndMessages(null)
-        runCatching { suggestionSearch.destroy() }
-        runCatching { routeSearch.destroy() }
+        if (suggestionSearchDelegate.isInitialized()) {
+            runCatching { suggestionSearch.destroy() }
+        }
+        if (routeSearchDelegate.isInitialized()) {
+            runCatching { routeSearch.destroy() }
+        }
+        numberIconCache.values.forEach { runCatching { it.recycle() } }
+        numberIconCache.clear()
+        distanceIconCache.values.forEach { runCatching { it.recycle() } }
+        distanceIconCache.clear()
+        runCatching { ghostDescriptor?.recycle() }
+        ghostDescriptor = null
+        // 释放本页绑定的共享背景捕获帧，避免整帧位图滞留到下次绑定；
+        // 只清自己的源，别清其它页面（首页地图可能还在任务栈下方）的帧
+        com.zcshou.gogogo.run.ui.glass.MapBackdropCapture.release(mapView)
         mapView.onDestroy()
         super.onDestroy()
     }
@@ -1361,7 +1462,7 @@ class RouteEditorActivity : AppCompatActivity() {
     private fun setupRouteSearch() {
         routeSearch.setOnGetRoutePlanResultListener(object : OnGetRoutePlanResultListener {
             override fun onGetWalkingRouteResult(result: WalkingRouteResult?) {
-                if (!roadBusy || !waitingSegment) return
+                if (isFinishing || isDestroyed || !roadBusy || !waitingSegment) return
                 waitingSegment = false
                 segmentTimeoutJob?.cancel()
                 runCatching {
@@ -1756,6 +1857,7 @@ class RouteEditorActivity : AppCompatActivity() {
     }
 
     private fun ghostIcon(): BitmapDescriptor {
+        ghostDescriptor?.let { return it }
         val size = dp(22).coerceAtLeast(22)
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -1769,9 +1871,8 @@ class RouteEditorActivity : AppCompatActivity() {
         paint.color = getColor(R.color.pf_canvas)
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = size * 0.10f
-        paint.color = getColor(R.color.pf_canvas)
         canvas.drawCircle(size / 2f, size / 2f, size * 0.34f, paint)
-        return BitmapDescriptorFactory.fromBitmap(bitmap)
+        return BitmapDescriptorFactory.fromBitmap(bitmap).also { ghostDescriptor = it }
     }
 
     private fun saveRoute() {
@@ -1865,8 +1966,33 @@ class RouteEditorActivity : AppCompatActivity() {
         view.findViewById<View>(R.id.btnSaveCancel).setOnClickListener { dialog.dismiss() }
         view.findViewById<View>(R.id.btnSaveConfirm).setOnClickListener {
             val name = input.text.toString().trim().ifEmpty { defaultName }
-            persistRoute(name)
+            val editing = editingRoute
+            if (editing == null) {
+                persistRoute(name)
+            } else {
+                // 二次编辑：默认覆盖，按钮文案已提示；长按或选择「另存为」保留原路线
+                persistRoute(name, overwrite = editing)
+            }
             dialog.dismiss()
+        }
+        val confirmButton = view.findViewById<View>(R.id.btnSaveConfirm)
+        if (editingRoute != null) {
+            (confirmButton as? android.widget.TextView)?.text = "覆盖保存"
+            confirmButton.setOnLongClickListener {
+                val name = input.text.toString().trim().ifEmpty { defaultName }
+                persistRoute("$name 副本", overwrite = null)
+                dialog.dismiss()
+                true
+            }
+            // 显式双按钮：既覆盖当前路线，也另存为新路线
+            view.findViewById<View>(R.id.btnSaveSaveAs)?.let { saveAs ->
+                saveAs.visibility = View.VISIBLE
+                saveAs.setOnClickListener {
+                    val name = input.text.toString().trim().ifEmpty { defaultName }
+                    persistRoute("$name 副本", overwrite = null)
+                    dialog.dismiss()
+                }
+            }
         }
         dialog.setOnDismissListener {
             status.visibility = View.VISIBLE
@@ -1879,9 +2005,13 @@ class RouteEditorActivity : AppCompatActivity() {
         )
     }
 
-    private fun persistRoute(name: String) {
+    /**
+     * @param overwrite 非 null 时覆盖该既有路线（保留 id / 置顶 / 标签 / 记忆参数），
+     *                  null 时作为新路线插入
+     */
+    private fun persistRoute(name: String, overwrite: RunRouteEntity? = null) {
         val altitude = sampleAltitude()
-        val entity = RunRouteEntity(
+        val base = overwrite ?: RunRouteEntity(
             name = name,
             buildMode = buildMode,
             singleLapMeters = lapMeters,
@@ -1891,13 +2021,70 @@ class RouteEditorActivity : AppCompatActivity() {
             anchorNodesJson = if (mode == EditMode.TRACK) TrackJsonCodec.encode(anchors) else "[]",
             baseAltitudeMeters = altitude
         )
+        val entity = base.copy(
+            name = name,
+            buildMode = buildMode,
+            singleLapMeters = lapMeters,
+            isClosedLoop = isClosed,
+            isClockwise = isClockwise,
+            denseWaypointsJson = densePoints.toWgsJson(),
+            anchorNodesJson = if (mode == EditMode.TRACK) TrackJsonCodec.encode(anchors) else "[]",
+            baseAltitudeMeters = altitude,
+            // 真实海拔剖面：与最终 densePoints 等长才写入，否则置空让预览页回退估算
+            elevationProfileJson = importedElevationProfile
+                ?.takeIf { it.size == densePoints.size }
+                ?.let { RouteSources.elevationProfileJson(it) }
+        )
         lifecycleScope.launch {
-            val id = repository.saveRoute(entity)
-            toast(String.format(Locale.US, "已保存 #%d：%.0f m · 海拔 %.0f m", id, lapMeters, altitude))
-            status.text = String.format(Locale.US, "已保存 #%d · %s · 单圈 %.0f m", id, name, lapMeters)
+            if (overwrite != null) {
+                repository.updateRoute(entity)
+                toast(String.format(Locale.US, "已覆盖「%s」· %.0f m", name, lapMeters))
+                status.text = String.format(
+                    Locale.US, "已更新 #%d · %s · 单圈 %.0f m", overwrite.id, name, lapMeters
+                )
+            } else {
+                val id = repository.saveRoute(entity)
+                toast(String.format(Locale.US, "已保存 #%d：%.0f m · 海拔 %.0f m", id, lapMeters, altitude))
+                status.text = String.format(Locale.US, "已保存 #%d · %s · 单圈 %.0f m", id, name, lapMeters)
+            }
             draftSuppressed = true
             clearDraft()
         }
+    }
+
+    // ---------------- 整体微调（二次编辑） ----------------
+
+    /**
+     * 以当前地图中心最近的高密度轨迹点作为新起点（闭环重组）。
+     * 开放路线不旋转：环形重组会在末点与首点之间凭空造出跳跃段。
+     */
+    private fun resetStartToNearestPoint() {
+        if (densePoints.size < 3) {
+            toast("请先完成路线")
+            return
+        }
+        if (!TrackMathUtils.isClosedLoop(densePoints)) {
+            toast("开放折返路线不支持重设起点，可用「反转方向」")
+            return
+        }
+        val center = baiduMap.mapStatus?.target?.let {
+            CoordTransformUtil.bd09ToWgs84(it.latitude, it.longitude)
+                .let { p -> Wgs(p.lat, p.lng) }
+        } ?: return
+        var bestIndex = 0
+        var bestDistance = Double.MAX_VALUE
+        densePoints.forEachIndexed { index, point ->
+            val d = TrackMathUtils.distanceMeters(point, center)
+            if (d < bestDistance) {
+                bestDistance = d
+                bestIndex = index
+            }
+        }
+        densePoints = TrackMathUtils.rotateLoopStart(densePoints, bestIndex)
+        lapMeters = TrackMathUtils.cumulativeDistances(densePoints).last()
+        markEdited()
+        refreshUi()
+        toast(String.format(Locale.US, "已把起点移到最近节点（距中心 %.0f m）", bestDistance))
     }
 
     // ---------------- UI 刷新 / 绘制 ----------------
@@ -2160,37 +2347,89 @@ class RouteEditorActivity : AppCompatActivity() {
 
     // ---------------- GPX ----------------
 
-    private fun applyGpx(xml: String) {
-        val parsed = RouteSources.parseGpx(xml)
-        if (parsed.points.size < 3) {
+    private data class GpxPrepResult(
+        val parsed: RouteSources.GpxResult,
+        val points: List<Wgs>,
+        val closed: Boolean,
+        val lapMeters: Double,
+        val elevationProfile: List<Double>?
+    )
+
+    private suspend fun applyGpx(xml: String) {
+        val prep = withContext(Dispatchers.Default) {
+            val p = RouteSources.parseGpx(xml)
+            if (p.points.size < 3) {
+                return@withContext GpxPrepResult(p, emptyList(), false, 0.0, null)
+            }
+            val resampled = RouteSources.resample(p.points)
+            val (cPts, isC) = RouteSources.closeLoopIfNeeded(resampled, 40.0)
+            val lap = TrackMathUtils.cumulativeDistances(cPts).last()
+            // 真实 <ele> 剖面：重采样后点数变化，按原剖面等比抽样对齐
+            val profile = RouteSources.elevationProfile(p.elevations)?.let { raw ->
+                if (raw.size == cPts.size) raw else resampleProfile(raw, cPts.size)
+            }
+            GpxPrepResult(p, cPts, isC, lap, profile)
+        }
+        if (isFinishing || isDestroyed) return
+        if (prep.parsed.points.size < 3) {
             toast("GPX 中未找到有效轨迹点")
             return
         }
         anchors.clear()
         freehandStrokes.clear()
         currentStroke.clear()
-        val resampled = RouteSources.resample(parsed.points)
-        val (closedPoints, closed) = RouteSources.closeLoopIfNeeded(resampled, 40.0)
         mode = EditMode.GPX
-        densePoints = closedPoints
-        isClosed = closed
+        densePoints = prep.points
+        isClosed = prep.closed
         isClockwise = true
-        lapMeters = TrackMathUtils.cumulativeDistances(closedPoints).last()
+        lapMeters = prep.lapMeters
         buildMode = "GPX_IMPORT"
-        sourceHint = parsed.trackName ?: "GPX 路线"
+        sourceHint = prep.parsed.trackName ?: "GPX 路线"
+        importedElevationProfile = prep.elevationProfile
+        val elevationHint = when {
+            prep.elevationProfile == null -> ""
+            else -> String.format(
+                Locale.US,
+                " · 海拔 %.0f~%.0f m",
+                prep.elevationProfile.min(),
+                prep.elevationProfile.max()
+            )
+        }
+        val wptHint = if (prep.parsed.waypoints.isNotEmpty()) {
+            " · ${prep.parsed.waypoints.size} 个路点"
+        } else {
+            ""
+        }
         gpxInfo.text = String.format(
             Locale.US,
-            "原始 %d 点 → 加密 %d 点，%.0f m%s",
-            parsed.points.size,
-            closedPoints.size,
+            "原始 %d 点 → 加密 %d 点，%.0f m%s%s%s",
+            prep.parsed.points.size,
+            prep.points.size,
             lapMeters,
-            if (closed) "" else "（非闭环）"
+            if (prep.closed) "" else "（非闭环）",
+            elevationHint,
+            wptHint
         )
         markEdited()
         updateModeUi()
         refreshUi()
         if (densePoints.isNotEmpty()) centerOn(densePoints.first())
         toast("GPX 已导入：${String.format(Locale.US, "%.0f m", lapMeters)}")
+    }
+
+    /** 把海拔剖面按最近邻抽样到目标点数（重采样后的轨迹点数会变） */
+    private fun resampleProfile(profile: List<Double>, targetSize: Int): List<Double> {
+        if (profile.isEmpty() || targetSize <= 0) return profile
+        if (profile.size == targetSize) return profile
+        val out = ArrayList<Double>(targetSize)
+        for (i in 0 until targetSize) {
+            val srcIndex = if (targetSize == 1) 0 else {
+                (i.toDouble() / (targetSize - 1) * (profile.size - 1)).toInt()
+                    .coerceIn(0, profile.size - 1)
+            }
+            out.add(profile[srcIndex])
+        }
+        return out
     }
 
     // ---------------- 草稿 ----------------

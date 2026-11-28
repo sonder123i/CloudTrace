@@ -4,4 +4,6 @@
          不要把 filesDir/cacheDir/外部存储根目录整体暴露给 FileProvider。 -->
     <files-path name="updates" path="app-updates/" />
     <files-path name="diagnostics" path="diagnostics/" />
+    <!-- 战报海报：只在 cacheDir 下放行专用导出子目录 -->
+    <cache-path name="share_cards" path="share-cards/" />
 </paths>

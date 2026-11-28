@@ -1,0 +1,363 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 5,
+    "identityHash": "fb90015bd9e7120bfbf74ef2971f76be",
+    "entities": [
+      {
+        "tableName": "run_routes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `buildMode` TEXT NOT NULL, `singleLapMeters` REAL NOT NULL, `isClosedLoop` INTEGER NOT NULL, `isClockwise` INTEGER NOT NULL, `denseWaypointsJson` TEXT NOT NULL, `anchorNodesJson` TEXT NOT NULL, `baseAltitudeMeters` REAL NOT NULL, `lastTargetDistanceKm` REAL NOT NULL, `lastTargetPaceSecPerKm` INTEGER NOT NULL, `lastSmartJitterEnabled` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `isPinned` INTEGER NOT NULL, `tag` TEXT NOT NULL, `elevationProfileJson` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "buildMode",
+            "columnName": "buildMode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "singleLapMeters",
+            "columnName": "singleLapMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isClosedLoop",
+            "columnName": "isClosedLoop",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isClockwise",
+            "columnName": "isClockwise",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "denseWaypointsJson",
+            "columnName": "denseWaypointsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "anchorNodesJson",
+            "columnName": "anchorNodesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "baseAltitudeMeters",
+            "columnName": "baseAltitudeMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastTargetDistanceKm",
+            "columnName": "lastTargetDistanceKm",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastTargetPaceSecPerKm",
+            "columnName": "lastTargetPaceSecPerKm",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastSmartJitterEnabled",
+            "columnName": "lastSmartJitterEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isPinned",
+            "columnName": "isPinned",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tag",
+            "columnName": "tag",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elevationProfileJson",
+            "columnName": "elevationProfileJson",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_run_routes_createdAt",
+            "unique": false,
+            "columnNames": [
+              "createdAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_run_routes_createdAt` ON `${TABLE_NAME}` (`createdAt`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "run_schedules",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `routeId` INTEGER NOT NULL, `title` TEXT NOT NULL, `targetDistanceKm` REAL NOT NULL, `distanceJitterMeters` INTEGER NOT NULL, `targetPaceSecPerKm` INTEGER NOT NULL, `enableLaneDrift` INTEGER NOT NULL, `enableCooldownWalk` INTEGER NOT NULL, `isScheduleEnabled` INTEGER NOT NULL, `windowStartMinutes` INTEGER NOT NULL, `windowJitterMinutes` INTEGER NOT NULL, `repeatDaysMask` INTEGER NOT NULL, `autoIsolateWifi` INTEGER NOT NULL, `linkedTargetAppPkg` TEXT, `skipDateIso` TEXT, `paceStrategy` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "routeId",
+            "columnName": "routeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetDistanceKm",
+            "columnName": "targetDistanceKm",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "distanceJitterMeters",
+            "columnName": "distanceJitterMeters",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetPaceSecPerKm",
+            "columnName": "targetPaceSecPerKm",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enableLaneDrift",
+            "columnName": "enableLaneDrift",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "enableCooldownWalk",
+            "columnName": "enableCooldownWalk",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isScheduleEnabled",
+            "columnName": "isScheduleEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "windowStartMinutes",
+            "columnName": "windowStartMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "windowJitterMinutes",
+            "columnName": "windowJitterMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "repeatDaysMask",
+            "columnName": "repeatDaysMask",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "autoIsolateWifi",
+            "columnName": "autoIsolateWifi",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "linkedTargetAppPkg",
+            "columnName": "linkedTargetAppPkg",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "skipDateIso",
+            "columnName": "skipDateIso",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "paceStrategy",
+            "columnName": "paceStrategy",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_run_schedules_routeId",
+            "unique": false,
+            "columnNames": [
+              "routeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_run_schedules_routeId` ON `${TABLE_NAME}` (`routeId`)"
+          },
+          {
+            "name": "index_run_schedules_isScheduleEnabled",
+            "unique": false,
+            "columnNames": [
+              "isScheduleEnabled"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_run_schedules_isScheduleEnabled` ON `${TABLE_NAME}` (`isScheduleEnabled`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "run_records",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `routeId` INTEGER NOT NULL, `routeName` TEXT NOT NULL, `actualDistanceMeters` REAL NOT NULL, `durationSeconds` INTEGER NOT NULL, `averagePaceSec` INTEGER NOT NULL, `startedAt` INTEGER NOT NULL, `status` TEXT NOT NULL, `splitsJson` TEXT, `paceStrategy` TEXT NOT NULL, `elevationGainMeters` REAL NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "routeId",
+            "columnName": "routeId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "routeName",
+            "columnName": "routeName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "actualDistanceMeters",
+            "columnName": "actualDistanceMeters",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationSeconds",
+            "columnName": "durationSeconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "averagePaceSec",
+            "columnName": "averagePaceSec",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "startedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "splitsJson",
+            "columnName": "splitsJson",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "paceStrategy",
+            "columnName": "paceStrategy",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elevationGainMeters",
+            "columnName": "elevationGainMeters",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_run_records_status_startedAt",
+            "unique": false,
+            "columnNames": [
+              "status",
+              "startedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_run_records_status_startedAt` ON `${TABLE_NAME}` (`status`, `startedAt`)"
+          },
+          {
+            "name": "index_run_records_startedAt",
+            "unique": false,
+            "columnNames": [
+              "startedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_run_records_startedAt` ON `${TABLE_NAME}` (`startedAt`)"
+          }
+        ],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fb90015bd9e7120bfbf74ef2971f76be')"
+    ]
+  }
+}

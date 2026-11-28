@@ -29,10 +29,13 @@ object RealLocationSampler {
     )
 
     suspend fun sample(context: Context): Location? {
-        val granted = ContextCompat.checkSelfPermission(
+        val hasFine = ContextCompat.checkSelfPermission(
             context, Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) return null
+        val hasCoarse = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!hasFine && !hasCoarse) return null
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
 
         bestNonMock(lm)?.let { return it }
@@ -40,11 +43,11 @@ object RealLocationSampler {
         val paused = FreeRoamController.isAttached()
         if (paused) FreeRoamController.pauseInjection()
         val fresh = try {
-            requestNetworkFix(context, lm)
+            requestNetworkFix(context, lm)?.takeUnless { isMock(it) }
         } finally {
             if (paused) FreeRoamController.resumeInjection()
         }
-        return fresh ?: bestNonMock(lm) ?: bestAny(lm)
+        return fresh ?: bestNonMock(lm)
     }
 
     @RequiresPermission(anyOf = [
@@ -78,10 +81,12 @@ object RealLocationSampler {
     ): Location? = withTimeoutOrNull(4_500) {
         suspendCancellableCoroutine { cont ->
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val signal = android.os.CancellationSignal()
+                cont.invokeOnCancellation { runCatching { signal.cancel() } }
                 runCatching {
                     lm.getCurrentLocation(
                         LocationManager.NETWORK_PROVIDER,
-                        null,
+                        signal,
                         context.mainExecutor
                     ) { loc -> if (cont.isActive) cont.resume(loc) }
                 }.onFailure {

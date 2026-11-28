@@ -33,8 +33,20 @@ class RunScheduleAlarmReceiver : BroadcastReceiver() {
                 val schedule = repository.getSchedule(scheduleId) ?: return@launch
                 if (!schedule.isScheduleEnabled) return@launch
 
-                // 先排下一次，保证即使本次执行异常也能循环
-                RunScheduleAlarmManager.scheduleNext(context, schedule)
+                // 用户在该日闹钟触发前点了「跳过今日」：本次直接作废，
+                // 同时消费掉跳过标记，避免它继续影响下一个自然日
+                if (schedule.skipDateIso != null &&
+                    schedule.skipDateIso == RunScheduleAlarmManager.todayIso()
+                ) {
+                    val cleared = schedule.copy(skipDateIso = null)
+                    repository.updateSchedule(cleared)
+                    RunScheduleAlarmManager.scheduleNext(context, cleared, fromTrigger = true)
+                    Log.i("RunScheduleAlarm", "跳过今日：schedule=$scheduleId 本次不触发")
+                    return@launch
+                }
+
+                // 从闹钟触发回调重排：强制跳过当天，避免同日抖动窗口内再次触发
+                RunScheduleAlarmManager.scheduleNext(context, schedule, fromTrigger = true)
 
                 val route = repository.getRoute(schedule.routeId) ?: return@launch
                 val startIntent = RunSessionService.startIntent(
@@ -44,7 +56,10 @@ class RunScheduleAlarmReceiver : BroadcastReceiver() {
                     schedule.targetPaceSecPerKm,
                     schedule.enableLaneDrift,
                     schedule.enableCooldownWalk,
-                    schedule.linkedTargetAppPkg
+                    schedule.linkedTargetAppPkg,
+                    distanceJitterMeters = schedule.distanceJitterMeters,
+                    autoIsolateWifi = schedule.autoIsolateWifi,
+                    paceStrategy = schedule.paceStrategy
                 )
                 try {
                     ContextCompat.startForegroundService(context, startIntent)

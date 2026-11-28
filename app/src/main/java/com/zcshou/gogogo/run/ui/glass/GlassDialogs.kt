@@ -1,8 +1,6 @@
 package com.zcshou.gogogo.run.ui.glass
 
 import android.content.Context
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.InsetDrawable
 import com.example.liquidglass.LiquidGlassDialogBuilder
 import com.example.liquidglass.LiquidGlassView
 import com.zcshou.gogogo.R
@@ -17,7 +15,9 @@ import com.zcshou.gogogo.R
 object GlassDialogs {
 
     private const val DIALOG_CORNER_DP = 26f
-    private const val CORE_INSET_DP = 8f
+
+    /** 阅读内芯羽化带宽：从面板边缘算起，把 8dp 折射区平滑过渡到内芯。 */
+    private const val CORE_FEATHER_DP = 12f
 
     fun builder(context: Context): LiquidGlassDialogBuilder {
         val textColor = context.getColor(R.color.pf_text_primary)
@@ -48,7 +48,12 @@ object GlassDialogs {
     }
 
     /**
-     * 在玻璃面板内部垫一层 96% 实底内芯，外圈留 [CORE_INSET_DP] 露出折射/高光。
+     * 在玻璃面板内部垫一层羽化阅读内芯。
+     *
+     * 旧实现用 `InsetDrawable` 在 8dp 处放一块 96% 实色圆角矩形，外圈折射区与
+     * 阅读区之间会有一条生硬的分界线。现在换成 [FeatheredCoreDrawable]：
+     * 从面板边缘起 12dp 内 alpha 连续攀升到 96%，折射区向阅读区平滑过渡，
+     * 顶部再留 1dp 镜面细高光。
      *
      * `LiquidGlassDialogBuilder` 会在 installGlass 里清掉弹窗各层底色，
      * 这里等面板真正挂到玻璃上之后再把内芯放回去；内芯只挡背景，不影响布局与文字。
@@ -58,13 +63,12 @@ object GlassDialogs {
             val panel = glass.getChildAt(0) ?: return@post
             if (panel.background != null) return@post
             val density = context.resources.displayMetrics.density
-            val inset = (CORE_INSET_DP * density).toInt()
-            val core = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                cornerRadius = (DIALOG_CORNER_DP * density - inset).coerceAtLeast(0f)
-                setColor(context.getColor(R.color.dr_dialog_core))
-            }
-            panel.background = InsetDrawable(core, inset, inset, inset, inset)
+            val radius = DIALOG_CORNER_DP * density
+            panel.background = FeatheredCoreDrawable(
+                context = context,
+                cornerRadiiPx = floatArrayOf(radius, radius, radius, radius),
+                featherPx = CORE_FEATHER_DP * density
+            )
         }
     }
 

@@ -1,0 +1,12 @@
+<resources>
+    <!--
+        深色主题下的 API 31+ 系统 SplashWindow 定制。
+        与 values-v31/styles.xml 成对维护，名称与属性集合完全一致，父主题换成深海光学。
+    -->
+    <style name="Theme.PaceFlow.Launch" parent="Theme.PaceFlow">
+        <item name="android:windowBackground">@color/dr_launch_canvas_top</item>
+        <item name="android:windowSplashScreenBackground">@color/dr_launch_canvas_top</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_emblem</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
+    </style>
+</resources>

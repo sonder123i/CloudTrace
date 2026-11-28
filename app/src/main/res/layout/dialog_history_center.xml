@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    战报中心：累计数据 + 月历打卡热力 + 可筛选的历史列表。
+    窗口底交给跨窗液态玻璃（同 showDetail），内容层保持透明。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@android:color/transparent"
+    android:fillViewport="true"
+    android:overScrollMode="never">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="本地战报中心"
+            android:textColor="@color/pf_volt"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="全部数据只存在本机，不上传服务器"
+            android:textColor="@color/pf_text_tertiary"
+            android:textSize="10sp" />
+
+        <!-- 累计公里 / 完成跑次 / 当前连续 / 最长连胜 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:baselineAligned="false"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/statTotalKm"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFeatureSettings="tnum"
+                    android:text="0.00"
+                    android:textColor="@color/pf_text_primary"
+                    android:textSize="19sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="累计公里"
+                    android:textColor="@color/pf_text_secondary"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/statRuns"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFeatureSettings="tnum"
+                    android:text="0"
+                    android:textColor="@color/pf_text_primary"
+                    android:textSize="19sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="完成跑次"
+                    android:textColor="@color/pf_text_secondary"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/statStreak"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFeatureSettings="tnum"
+                    android:text="0 天"
+                    android:textColor="@color/pf_text_primary"
+                    android:textSize="19sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="当前连续"
+                    android:textColor="@color/pf_text_secondary"
+                    android:textSize="10sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/statLongest"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFeatureSettings="tnum"
+                    android:text="0 天"
+                    android:textColor="@color/pf_text_primary"
+                    android:textSize="19sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="最长连胜"
+                    android:textColor="@color/pf_text_secondary"
+                    android:textSize="10sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/monthPrev"
+                android:layout_width="34dp"
+                android:layout_height="30dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:gravity="center"
+                android:text="‹"
+                android:textColor="@color/pf_text_primary"
+                android:textSize="20sp" />
+
+            <TextView
+                android:id="@+id/monthLabel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFeatureSettings="tnum"
+                android:gravity="center"
+                android:textColor="@color/pf_text_primary"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/monthNext"
+                android:layout_width="34dp"
+                android:layout_height="30dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:gravity="center"
+                android:text="›"
+                android:textColor="@color/pf_text_primary"
+                android:textSize="20sp" />
+        </LinearLayout>
+
+        <com.zcshou.gogogo.run.ui.home.HistoryCalendarHeatmapView
+            android:id="@+id/heatmap"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp" />
+
+        <TextView
+            android:id="@+id/dayFilterHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:textColor="@color/pf_text_tertiary"
+            android:textSize="10sp"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/filterAll"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/bg_day_capsule"
+                android:gravity="center"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="全部"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/filterCompleted"
+                android:layout_width="wrap_content"
+                android:layout_height="28dp"
+                android:background="@drawable/bg_day_capsule"
+                android:gravity="center"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:text="已完成"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/recordCountLabel"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFeatureSettings="tnum"
+                android:gravity="end"
+                android:textColor="@color/pf_text_secondary"
+                android:textSize="10sp" />
+        </LinearLayout>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/historyList"
+            android:layout_width="match_parent"
+            android:layout_height="188dp"
+            android:layout_marginTop="4dp"
+            android:overScrollMode="never" />
+
+        <TextView
+            android:id="@+id/historyEmpty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:paddingTop="18dp"
+            android:paddingBottom="18dp"
+            android:text="这个筛选下还没有记录"
+            android:textColor="@color/pf_text_secondary"
+            android:textSize="11sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</ScrollView>

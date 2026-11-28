@@ -23,7 +23,7 @@ object TrackTemplates {
 
     fun template(id: String): Template = Template(id, labelOf(id), localPointsOf(id))
 
-    private val cache = mutableMapOf<String, List<Pair<Double, Double>>>()
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, List<Pair<Double, Double>>>()
 
     private fun localPointsOf(id: String): List<Pair<Double, Double>> = cache.getOrPut(id) {
         val raw = when (id) {

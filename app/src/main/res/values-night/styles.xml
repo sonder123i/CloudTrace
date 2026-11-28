@@ -1,0 +1,10 @@
+<resources>
+    <!--
+        深色启动窗口主题。
+        与 res/values/styles.xml 中的 Theme.PaceFlow.Launch 成对存在、名称完全一致：
+        深色下窗口底色取深海光学启动画布，避免「黑主题先闪一帧冰川白」。
+    -->
+    <style name="Theme.PaceFlow.Launch" parent="Theme.PaceFlow">
+        <item name="android:windowBackground">@color/dr_launch_canvas_top</item>
+    </style>
+</resources>

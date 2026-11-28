@@ -63,7 +63,7 @@ object BuildInfoDialog {
     }
 
     private fun buildText(activity: Activity): String {
-        val logDir = activity.getExternalFilesDir("Logs")
+        val logDir = java.io.File(activity.filesDir, Diagnostics.LOG_DIR)
         val recentCrash = CrashJournal.read(activity)
         return buildString {
             appendLine("版本名称: ${BuildConfig.VERSION_NAME}")

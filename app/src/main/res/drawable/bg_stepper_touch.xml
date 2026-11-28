@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 悬浮窗步进器 ± 按钮：浅灰圆形触控底托，提升运动中盲操准确率 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="oval">
-    <solid android:color="@color/pf_stepper_touch" />
-</shape>

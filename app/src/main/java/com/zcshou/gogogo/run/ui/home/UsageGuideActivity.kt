@@ -37,6 +37,8 @@ class UsageGuideActivity : AppCompatActivity() {
 
         val egg = findViewById<MascotEggCardView>(R.id.usageGuideEgg)
         if (MascotPrefs.mode(this) != MascotMode.OFF) {
+            // 首次使用引导页即解锁「初次见面」拍立得
+            com.zcshou.gogogo.mascot.MascotEggStore.unlock(this, MascotEgg.WELCOME_ARMS)
             egg.bind(MascotEgg.WELCOME_ARMS)
         }
 

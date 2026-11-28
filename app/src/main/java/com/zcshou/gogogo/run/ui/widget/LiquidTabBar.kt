@@ -22,6 +22,7 @@ import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
 import com.example.liquidglass.LiquidGlassView
 import com.zcshou.gogogo.run.ui.glass.GlassLensRenderer
+import com.zcshou.gogogo.run.ui.glass.GlassRenderGate
 import kotlin.math.abs
 import kotlin.math.floor
 import kotlin.math.min
@@ -104,6 +105,13 @@ class LiquidTabBar(
 
     private val centers = FloatArray(tabs.size)
     private val widths = FloatArray(tabs.size)
+
+    /** 透镜矩形（用于水银融合），两块 RectF 全程复用。 */
+    private val lensRect = RectF()
+    private var secondaryShapeActive = false
+    private var lastShapeX = Float.NaN
+    private var lastShapeY = Float.NaN
+    private var lastShapeSmooth = Float.NaN
 
     private var selected = 0
     private var value = 0f
@@ -226,6 +234,8 @@ class LiquidTabBar(
         setHiddenTab(roundValue(value))
         lens.translationZ = dp(4f)
         animatePress(1f, damping = 0.65f, stiffness = 300f)
+        // 玻璃形状与位移都在变：顺延一次采样窗口，让折射跟上按压
+        GlassRenderGate.requestRefresh(320L)
     }
 
     private fun onMove(event: MotionEvent) {
@@ -240,6 +250,8 @@ class LiquidTabBar(
         setValue(raw)
         applyRubberBand(raw)
         setHiddenTab(roundValue(value))
+        // 整条轨道在侧移，底下的页面内容相对玻璃也在动
+        GlassRenderGate.requestRefresh(200L)
         val haptic = roundValue(value)
         if (haptic != lastHapticIndex) {
             lastHapticIndex = haptic
@@ -320,6 +332,53 @@ class LiquidTabBar(
             tab.weight = weight
             tab.pressProgress = pressProgress * weight
         }
+        applySecondaryShape()
+    }
+
+    // ---------------------------------------------------------------- 水银融合
+
+    /**
+     * 按压或横向拖拽时，把透镜矩形作为 `setSecondaryShape` 的第二个胶囊
+     * 塞进底栏玻璃的一次折射 Pass：两块形状做 `smin` 平滑并集，
+     * 透镜与轨道之间会拉出一段"水银粘连"的过渡脊。
+     *
+     * 静止（`pressProgress <= 0.01`）时传 null 恢复清澈双层轮廓。
+     * 位移 / 平滑半径变化不足阈值时不下发，避免给基类制造无意义重绘。
+     */
+    private fun applySecondaryShape() {
+        val glassView = glass as? LiquidGlassView ?: return
+        if (pressProgress <= 0.01f || !metricsReady ||
+            glass.width <= 0 || glass.height <= 0
+        ) {
+            if (secondaryShapeActive) {
+                secondaryShapeActive = false
+                lastShapeX = Float.NaN
+                lastShapeY = Float.NaN
+                lastShapeSmooth = Float.NaN
+                glassView.setSecondaryShape(null, 0f, 0f)
+            }
+            return
+        }
+
+        lens.currentRect(lensRect)
+        // 透镜与玻璃同为 container 的直接子 View，两者 translationX 相同，直接相减即可
+        lensRect.offset(
+            (lens.left - glass.left).toFloat(),
+            (lens.top - glass.top).toFloat()
+        )
+        val smooth = 14f * density * pressProgress
+        if (secondaryShapeActive &&
+            abs(lensRect.centerX() - lastShapeX) < 0.5f &&
+            abs(lensRect.centerY() - lastShapeY) < 0.5f &&
+            abs(smooth - lastShapeSmooth) < 0.05f
+        ) {
+            return
+        }
+        secondaryShapeActive = true
+        lastShapeX = lensRect.centerX()
+        lastShapeY = lensRect.centerY()
+        lastShapeSmooth = smooth
+        glassView.setSecondaryShape(lensRect, lensRect.height() / 2f, smooth)
     }
 
     private fun applyLens() {
@@ -470,6 +529,9 @@ class LiquidTabBar(
         private var jellyX = 0f
         private var jellyY = 0f
 
+        /** 复用几何矩形：onDraw 与 setSecondaryShape 共用，避免每帧 new RectF。 */
+        private val drawRect = RectF()
+
         init {
             isClickable = false
             isFocusable = false
@@ -489,6 +551,33 @@ class LiquidTabBar(
         }
 
         fun pressScaleAverage(): Float = (scaleXOf() + scaleYOf()) / 2f
+
+        /** 当前透镜绘制矩形（父容器坐标），与水银融合、绘制共用同一套几何。 */
+        fun currentRect(out: RectF) {
+            if (baseWidth <= 0f || width <= 0f) {
+                out.setEmpty()
+                return
+            }
+            val lensWidth = baseWidth * scaleXOf()
+            val lensHeight = baseHeight * scaleYOf()
+            // 放大必须**关于中心对称**：capybara 的 scale 作用在 graphicsLayer 上，
+            // 56dp 的胶囊按下涨到 78dp 时上下各溢出 11dp。曾经这里锚在底边，
+            // 按下时整块往下长，底部溢出轨道、顶部留空，观感是"沉下去"而不是"鼓起来"。
+            val centerY = height / 2f
+            val half = lensWidth / 2f
+            // 布局未完成时 width 可能小于透镜宽度，coerceIn 的上下界会翻转直接抛异常
+            val cx = if (width >= lensWidth) {
+                centerX.coerceIn(half, width - half)
+            } else {
+                width / 2f
+            }
+            out.set(
+                cx - half,
+                centerY - lensHeight / 2f,
+                cx + half,
+                centerY + lensHeight / 2f
+            )
+        }
 
         private fun updateJelly() {
             val tracker = velocityTracker
@@ -520,24 +609,15 @@ class LiquidTabBar(
 
         override fun onDraw(canvas: Canvas) {
             if (baseWidth <= 0f) return
-            val lensWidth = baseWidth * scaleXOf()
-            val lensHeight = baseHeight * scaleYOf()
-            // 放大必须**关于中心对称**：capybara 的 scale 作用在 graphicsLayer 上，
-            // 56dp 的胶囊按下涨到 78dp 时上下各溢出 11dp。曾经这里锚在底边，
-            // 按下时整块往下长，底部溢出轨道、顶部留空，观感是"沉下去"而不是"鼓起来"。
-            val centerY = height / 2f
-            val top = centerY - lensHeight / 2f
-            val bottom = centerY + lensHeight / 2f
-            val half = lensWidth / 2f
-            val cx = centerX.coerceIn(half, width - half)
+            currentRect(drawRect)
             GlassLensRenderer.drawInnerLens(
                 canvas = canvas,
                 context = context,
-                left = cx - half,
-                top = top,
-                right = cx + half,
-                bottom = bottom,
-                radius = lensHeight / 2f,
+                left = drawRect.left,
+                top = drawRect.top,
+                right = drawRect.right,
+                bottom = drawRect.bottom,
+                radius = drawRect.height() / 2f,
                 density = density,
                 dispersion = press,
                 // 底栏下面压着模糊壁纸：透镜按 capybara 的 0.34 白档走薄玻璃，

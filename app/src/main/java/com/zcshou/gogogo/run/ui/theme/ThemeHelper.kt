@@ -37,6 +37,28 @@ object ThemeHelper {
     private const val KEY_DARK = "dark_theme"
     private const val KEY_THEME_MODE = "theme_mode"
 
+    /**
+     * 进程启动瞬间的**系统**昼夜模式。
+     *
+     * 必须在 [applyGlobalNightMode] 之前采集（见 GoApplication.onCreate）：
+     * AppCompat 会把应用级 Resources 的 uiMode 改成用户选择，之后再读就只剩「应用选择」了。
+     * 保留它是为了对齐系统 SplashWindow——那一层由系统进程按系统 uiMode 解析，
+     * 拿不到应用内的手动选择。
+     */
+    @Volatile
+    private var systemNightMode: Boolean? = null
+
+    /** Application.onCreate 里最先调用，采集真正的系统昼夜。 */
+    fun captureSystemNightMode(context: Context) {
+        systemNightMode = (context.resources.configuration.uiMode and
+            Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    /** 系统（而非应用内选择）当前是否深色；未采集时退回当前资源配置。 */
+    fun isSystemDark(context: Context): Boolean = systemNightMode
+        ?: ((context.resources.configuration.uiMode and
+            Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
+
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 

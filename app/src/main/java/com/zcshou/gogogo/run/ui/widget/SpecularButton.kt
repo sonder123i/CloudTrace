@@ -55,6 +55,20 @@ class SpecularButton @JvmOverloads constructor(
         style = Paint.Style.STROKE
         strokeWidth = 1f * density
     }
+    private val shimmerColors = intArrayOf(0x00FFFFFF, shimmerColor, shimmerCore, shimmerColor, 0x00FFFFFF)
+    private val shimmerStops = floatArrayOf(0f, 0.32f, 0.5f, 0.68f, 1f)
+    private val shimmerMatrix = android.graphics.Matrix()
+    private var unitShimmerShader: LinearGradient? = null
+    private var topEdgeShader: LinearGradient? = null
+    private val suppressionListener: () -> Unit = {
+        post {
+            if (!com.zcshou.gogogo.run.ui.glass.DeepRunGlassManager.isRenderSuppressed &&
+                isAttachedToWindow && isShown
+            ) {
+                startShimmer()
+            }
+        }
+    }
 
     private var shimmerPhase = 0f
     private var shimmerAnimator: android.animation.ValueAnimator? = null
@@ -87,10 +101,12 @@ class SpecularButton @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        com.zcshou.gogogo.run.ui.glass.DeepRunGlassManager.addSuppressionListener(suppressionListener)
         startShimmer()
     }
 
     override fun onDetachedFromWindow() {
+        com.zcshou.gogogo.run.ui.glass.DeepRunGlassManager.removeSuppressionListener(suppressionListener)
         stopShimmer()
         sonarRunnable?.let { removeCallbacks(it) }
         pressAnimX?.cancel()
@@ -100,17 +116,27 @@ class SpecularButton @JvmOverloads constructor(
 
     override fun onWindowVisibilityChanged(visibility: Int) {
         super.onWindowVisibilityChanged(visibility)
-        if (visibility == View.VISIBLE && isAttachedToWindow) startShimmer() else stopShimmer()
+        if (visibility == View.VISIBLE && isAttachedToWindow && isShown) startShimmer() else stopShimmer()
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        super.onVisibilityChanged(changedView, visibility)
+        if (visibility == View.VISIBLE && isAttachedToWindow && isShown) startShimmer() else stopShimmer()
     }
 
     private fun startShimmer() {
         if (shimmerAnimator != null) return
+        if (com.zcshou.gogogo.run.data.prefs.DisplayPrefs.quality(context) ==
+            com.zcshou.gogogo.run.data.prefs.DisplayPrefs.RenderQuality.BALANCED
+        ) {
+            return
+        }
         val animator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 4_000L
             repeatCount = android.animation.ValueAnimator.INFINITE
             addUpdateListener {
                 // 巡航 / 锁屏期间全局抑制：立即休眠，避免后台持续重绘
-                if (com.zcshou.gogogo.run.ui.glass.DeepRunGlassManager.isRenderSuppressed) {
+                if (com.zcshou.gogogo.run.ui.glass.DeepRunGlassManager.isRenderSuppressed || !isShown) {
                     shimmerAnimator?.cancel()
                     shimmerAnimator = null
                     return@addUpdateListener
@@ -136,6 +162,19 @@ class SpecularButton @JvmOverloads constructor(
         shapeRect.set(0f, 0f, w.toFloat(), h.toFloat())
         shapePath.reset()
         shapePath.addRoundRect(shapeRect, h / 2f, h / 2f, Path.Direction.CW)
+        if (w > 0 && h > 0) {
+            val band = w * 0.14f
+            unitShimmerShader = LinearGradient(
+                0f, 0f, band, h.toFloat(),
+                shimmerColors, shimmerStops, Shader.TileMode.CLAMP
+            )
+            topEdgeShader = LinearGradient(
+                0f, 0f, w.toFloat(), 0f,
+                intArrayOf(0x00FFFFFF, topEdgeColor, topEdgeColor, 0x00FFFFFF),
+                floatArrayOf(0f, 0.12f, 0.88f, 1f),
+                Shader.TileMode.CLAMP
+            )
+        }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -149,33 +188,24 @@ class SpecularButton @JvmOverloads constructor(
 
     private fun drawSpecularShimmer(canvas: Canvas) {
         if (shimmerPhase > 0.18f) return
+        val shader = unitShimmerShader ?: return
         val progress = shimmerPhase / 0.18f
         val w = width.toFloat()
         val h = height.toFloat()
-        // 极细冷白银色玻璃反光：只占宽度 14%，扫过时像玻璃边缘的一线冷光
         val band = w * 0.14f
         val x = -band + (w + band * 2f) * progress
 
+        shimmerMatrix.setTranslate(x, 0f)
+        shader.setLocalMatrix(shimmerMatrix)
+        shimmerPaint.shader = shader
         canvas.save()
         canvas.clipPath(shapePath)
-        shimmerPaint.shader = LinearGradient(
-            x, 0f, x + band, h,
-            intArrayOf(0x00FFFFFF, shimmerColor, shimmerCore, shimmerColor, 0x00FFFFFF),
-            floatArrayOf(0f, 0.32f, 0.5f, 0.68f, 1f),
-            Shader.TileMode.CLAMP
-        )
         canvas.drawRect(0f, 0f, w, h, shimmerPaint)
         canvas.restore()
     }
 
     private fun drawTopEdge(canvas: Canvas) {
-        // 沿真实胶囊顶边画 1dp 内高光；不要用椭圆弧，宽按钮上会变成横穿中部的曲线
-        edgePaint.shader = LinearGradient(
-            0f, 0f, width.toFloat(), 0f,
-            intArrayOf(0x00FFFFFF, topEdgeColor, topEdgeColor, 0x00FFFFFF),
-            floatArrayOf(0f, 0.12f, 0.88f, 1f),
-            Shader.TileMode.CLAMP
-        )
+        edgePaint.shader = topEdgeShader
         edgePaint.color = topEdgeColor
         val y = 0.75f * density
         canvas.save()

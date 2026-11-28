@@ -19,13 +19,14 @@ object UpdateConfig {
             allowedHosts.isNotEmpty()
 
     /** 主源 + 备源，空值自动忽略。 */
-    val sources: List<String>
-        get() = listOf(
+    val sources: List<String> by lazy {
+        listOf(
             BuildConfig.UPDATE_MANIFEST_URL,
             BuildConfig.UPDATE_BACKUP_URL
         ).map { it.trim() }
             .filter { it.isNotEmpty() }
             .distinct()
+    }
 
     /**
      * 更新相关网络只允许自建/官方 Release 域。
@@ -33,15 +34,14 @@ object UpdateConfig {
      * 构建脚本里的默认值已经包含 Pages、Gitee raw 与 GitHub/Gitee Release 资产域；
      * 如果换成自定义 CDN，需要通过 `GOGOGO_UPDATE_ALLOWED_HOSTS` 显式追加。
      */
-    val allowedHosts: Set<String>
-        get() {
-            val configured = BuildConfig.UPDATE_ALLOWED_HOSTS
-                .split(',')
-                .map { it.trim().lowercase() }
-                .filter { it.isNotEmpty() }
-                .toSet()
-            return configured.ifEmpty { FALLBACK_HOSTS }
-        }
+    val allowedHosts: Set<String> by lazy {
+        val configured = BuildConfig.UPDATE_ALLOWED_HOSTS
+            .split(',')
+            .map { it.trim().lowercase() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+        configured.ifEmpty { FALLBACK_HOSTS }
+    }
 
     private val FALLBACK_HOSTS = setOf(
         "github.com",

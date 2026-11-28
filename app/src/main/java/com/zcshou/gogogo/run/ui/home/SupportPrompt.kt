@@ -89,7 +89,7 @@ object SupportPrompt {
         val dialog = GlassDialogs.builder(activity)
             .setTitle(activity.getString(R.string.support_prompt_title, km))
             .setMessage(
-                activity.getString(R.string.support_prompt_body, km, stats.completedCount)
+                activity.getString(R.string.support_prompt_body, stats.completedCount)
             )
             .setPositiveButton(R.string.support_prompt_go) { _, _ ->
                 // 打开支持页即视为已表达意愿；无法确认是否真的付款，按用户意愿静默。

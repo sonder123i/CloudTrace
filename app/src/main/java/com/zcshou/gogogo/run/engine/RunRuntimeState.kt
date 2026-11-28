@@ -26,7 +26,13 @@ data class RunRuntimeState(
     /** PRE_START_SETTLE 倒计时剩余秒数（>0 表示预热中） */
     val settleRemainSec: Int = 0,
     /** 口袋守护：虚拟里程已推进但硬件步数没有增长 */
-    val stepsWarning: Boolean = false
+    val stepsWarning: Boolean = false,
+    /** 最近一次注入的海拔（米），悬浮窗遥测行用 */
+    val altitudeMeters: Double = 55.0,
+    /** 最近一次注入的定位精度（米） */
+    val accuracyMeters: Float = 6.5f,
+    /** 当前引擎动作线索：热身降速 / 弯道减速 / 末段冲刺 / 稳步巡航 / 慢走缓冲 */
+    val motionCue: String? = null
 ) {
     val targetKm: Double get() = targetMeters / 1000.0
     val accumulatedKm: Double get() = accumulatedMeters / 1000.0

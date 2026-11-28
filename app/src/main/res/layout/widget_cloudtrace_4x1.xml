@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    深海光学 4×1 桌面小组件。
+    RemoteViews 只支持有限控件：圆角背景用 drawable，玻璃质感靠半透深色 + 细描边表达
+    （桌面环境无法做真实折射采样）。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widgetRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_widget_cloudtrace"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="16dp"
+    android:paddingTop="12dp"
+    android:paddingEnd="12dp"
+    android:paddingBottom="12dp">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="本周"
+                android:textColor="#9AA4B2"
+                android:textSize="10sp" />
+
+            <TextView
+                android:id="@+id/widgetWeekKm"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="5dp"
+                android:fontFeatureSettings="tnum"
+                android:text="0.00"
+                android:textColor="#F5F7FA"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="2dp"
+                android:text="km"
+                android:textColor="#9AA4B2"
+                android:textSize="10sp" />
+
+            <!-- RemoteViews 白名单不含 View/Space：用空 TextView 占位撑开间距 -->
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/widgetStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="待命"
+                android:textColor="#9AA4B2"
+                android:textSize="10sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/widgetRouteName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="还没有路线"
+            android:textColor="#F5F7FA"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widgetPace"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="1dp"
+            android:ellipsize="end"
+            android:fontFeatureSettings="tnum"
+            android:maxLines="1"
+            android:text=""
+            android:textColor="#9AA4B2"
+            android:textSize="10sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widgetAction"
+        android:layout_width="wrap_content"
+        android:layout_height="34dp"
+        android:layout_marginStart="10dp"
+        android:background="@drawable/bg_widget_action"
+        android:gravity="center"
+        android:minWidth="64dp"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:text="开跑"
+        android:textColor="#08101A"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+</LinearLayout>

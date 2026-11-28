@@ -44,6 +44,7 @@ import com.zcshou.gogogo.run.data.db.RunRouteEntity
 import com.zcshou.gogogo.run.data.prefs.RoamSpeeds
 import com.zcshou.gogogo.run.data.prefs.RunPrefs
 import com.zcshou.gogogo.run.data.repository.RunRepository
+import com.zcshou.gogogo.run.engine.CoordInputParser
 import com.zcshou.gogogo.run.engine.CoordTransformUtil
 import com.zcshou.gogogo.run.engine.FreeRoamController
 import com.zcshou.gogogo.run.engine.TrackMathUtils
@@ -68,11 +69,14 @@ import java.util.Locale
  */
 class FreeRoamFragment : Fragment() {
 
+    /** 漫游图层：与路线编辑器同源的暗夜 / 标准 / 卫星三档 */
+    private enum class RoamLayer { DARK, NORMAL, SAT }
+
     private lateinit var mapView: TextureMapView
     private lateinit var baiduMap: BaiduMap
     /** 地图引擎就绪后重套一次皮肤；随 Fragment 销毁一并取消，避免对已销毁的 MapView 调用。 */
     private val reapplySkin = Runnable {
-        MapStyleHelper.applyForTheme(mapView)
+        applyRoamLayer(mapLayer)
         repositionMapAttribution()
     }
     private lateinit var coordText: TextView
@@ -88,10 +92,15 @@ class FreeRoamFragment : Fragment() {
     private lateinit var favRow: LinearLayout
     private lateinit var smoothSwitch: Switch
     private lateinit var repository: RunRepository
+    private lateinit var layerDark: TextView
+    private lateinit var layerNormal: TextView
+    private lateinit var layerSat: TextView
+    private var mapLayer = RoamLayer.DARK
 
     private var autoLocated = false
 
-    private val suggestionSearch by lazy { SuggestionSearch.newInstance() }
+    private val suggestionSearchDelegate = lazy { SuggestionSearch.newInstance() }
+    private val suggestionSearch by suggestionSearchDelegate
     private var targetMarker: Marker? = null
     private var trailOverlay: FiberTrail? = null
     private var positionMarker: Marker? = null
@@ -102,7 +111,7 @@ class FreeRoamFragment : Fragment() {
     private var lastMascotMoving = false
     private var mapRunLineShown = false
     private var pendingTarget: TrackMathUtils.LatLng? = null
-    private var lastTrailSize = -1
+    private var lastTrailSeq = -1L
     private var centeredOnce = false
 
     private var followEnabled = true
@@ -135,7 +144,7 @@ class FreeRoamFragment : Fragment() {
         MapStyleHelper.applyForTheme(mapView)
         // 地图引擎就绪后重套一次皮肤，确保深色模式不会残留亮白底图
         baiduMap.setOnMapLoadedCallback {
-            MapStyleHelper.applyForTheme(mapView)
+            applyRoamLayer(mapLayer)
             repositionMapAttribution()
         }
         mapView.postDelayed(reapplySkin, 900L)
@@ -151,26 +160,37 @@ class FreeRoamFragment : Fragment() {
         console = view.findViewById(R.id.roamConsole)
         consoleChip = view.findViewById(R.id.roamConsoleChip)
         // 地图页三块光学玻璃共享同一次地图刷新节拍（见 GlassRenderGate）
-        listOf(R.id.roamTopPanel, R.id.roamConsole).forEach { id ->
+        // 背景改由 MapBackdropCapture 接管：同帧只截一次地图，并做去蓝校色
+        listOf(R.id.roamTopPanel, R.id.roamConsole, R.id.roamTargetBar).forEach { id ->
             (view.findViewById<View>(id) as? com.example.liquidglass.LiquidGlassView)?.apply {
-                backdropSource = mapView
-                com.zcshou.gogogo.run.ui.glass.GlassRenderGate.register(this)
+                com.zcshou.gogogo.run.ui.glass.MapBackdropCapture.bind(this, mapView)
+                com.zcshou.gogogo.run.ui.glass.GlassRenderGate.registerMapPanel(this)
                 com.zcshou.gogogo.run.ui.glass.OpticalGlassTuning.applyMapPanel(this)
             }
         }
         // 圆形定位按钮：小尺寸控件只对齐刷新节拍与折射参数，
-        // 不加 applyMapPanel 的中性底衬（否则会盖掉图标）。
+        // 不加地图染色（46dp 里再蒙一层雾会把十字准星泡糊）。
         (view.findViewById<View>(R.id.btnLocateMe) as? com.example.liquidglass.LiquidGlassView)?.apply {
-            backdropSource = mapView
-            com.zcshou.gogogo.run.ui.glass.GlassRenderGate.register(this)
+            com.zcshou.gogogo.run.ui.glass.MapBackdropCapture.bind(this, mapView)
+            com.zcshou.gogogo.run.ui.glass.MapBackdropCapture.applyBlurProfile(this)
+            com.zcshou.gogogo.run.ui.glass.GlassRenderGate.registerMapPanel(this)
             enablePressEffect = false
             enableShadow = false
         }
         favScroll = view.findViewById(R.id.roamFavScroll)
         favRow = view.findViewById(R.id.roamFavRow)
         smoothSwitch = view.findViewById(R.id.switchSmoothWalk)
+        layerDark = view.findViewById(R.id.roamLayerDark)
+        layerNormal = view.findViewById(R.id.roamLayerNormal)
+        layerSat = view.findViewById(R.id.roamLayerSat)
         repository = RunRepository(requireContext())
         positionIcon = FiberPositionDot.icon(requireContext())
+
+        // 图层：默认跟随当前昼夜主题，用户点选后以用户选择为准
+        layerDark.setOnClickListener { applyRoamLayer(RoamLayer.DARK) }
+        layerNormal.setOnClickListener { applyRoamLayer(RoamLayer.NORMAL) }
+        layerSat.setOnClickListener { applyRoamLayer(RoamLayer.SAT) }
+        applyRoamLayer(if (ThemeHelper.isDark(requireContext())) RoamLayer.DARK else RoamLayer.NORMAL)
 
         mapView.showZoomControls(false)
         applyMapInsets(view)
@@ -194,7 +214,7 @@ class FreeRoamFragment : Fragment() {
             override fun onMapStatusChangeStart(status: MapStatus, reason: Int) = Unit
 
             override fun onMapStatusChange(status: MapStatus) {
-                com.zcshou.gogogo.run.ui.glass.GlassRenderGate.requestRefresh(260L)
+                com.zcshou.gogogo.run.ui.glass.GlassRenderGate.requestMapRefresh(260L)
                 repositionMapMascot()
             }
 
@@ -256,7 +276,7 @@ class FreeRoamFragment : Fragment() {
                         }
                         centeredOnce = true
                     }
-                    drawTrail(state.trail)
+                    drawTrail(state.trail, state.trailSeq)
                     trackRecording(pos)
                 }
             }
@@ -375,21 +395,25 @@ class FreeRoamFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        runCatching { mapView.onResume() }
-        if (::mapMascot.isInitialized) repositionMapMascot()
-        // 不再进入本页就自动拉起常驻悬浮摇杆：点地图上的「显示悬浮摇杆」提示
-        // 或使用录制/空降等动作时，服务会自行启动并显示摇杆。
+        if (!isHidden) {
+            runCatching { mapView.onResume() }
+            // 从后台/其它页回来时同步当前图层（卫星图不会被重新盖上暗色矩阵）
+            if (::baiduMap.isInitialized) applyRoamLayer(mapLayer)
+            if (::mapMascot.isInitialized) repositionMapMascot()
+        }
     }
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
         if (!hidden) {
+            runCatching { mapView.onResume() }
             autoLocateOnce()
             renderFavorites()
-            MapStyleHelper.applyForTheme(mapView)
+            applyRoamLayer(mapLayer)
             if (::mapMascot.isInitialized) repositionMapMascot()
-        } else if (::mapMascot.isInitialized) {
-            mapMascot.hide()
+        } else {
+            if (::mapMascot.isInitialized) mapMascot.hide()
+            runCatching { mapView.onPause() }
         }
     }
 
@@ -401,11 +425,25 @@ class FreeRoamFragment : Fragment() {
 
     override fun onDestroyView() {
         mapView.removeCallbacks(reapplySkin)
-        runCatching { suggestionSearch.destroy() }
+        runCatching {
+            baiduMap.setOnMapLoadedCallback(null)
+            baiduMap.setOnMapClickListener(null)
+            baiduMap.setOnMapLongClickListener(null)
+            baiduMap.setOnMapTouchListener(null)
+            baiduMap.setOnMapStatusChangeListener(null)
+        }
+        if (suggestionSearchDelegate.isInitialized()) {
+            runCatching { suggestionSearch.destroy() }
+        }
         if (::mapMascot.isInitialized) mapMascot.release()
+        runCatching { positionIcon?.recycle() }
+        positionIcon = null
         trailOverlay = null
         targetMarker = null
         positionMarker = null
+        // 释放本页绑定的共享背景捕获帧，避免整帧位图滞留到下次绑定；
+        // 只清自己的源，别清其它页面（首页地图可能还在任务栈下方）的帧
+        com.zcshou.gogogo.run.ui.glass.MapBackdropCapture.release(mapView)
         runCatching { mapView.onDestroy() }
         super.onDestroyView()
     }
@@ -416,6 +454,7 @@ class FreeRoamFragment : Fragment() {
      */
     private fun applyMapInsets(root: View) {
         val topPanel = root.findViewById<View>(R.id.roamTopPanel)
+        val layerBar = root.findViewById<View>(R.id.roamLayerBar)
         val consoleView = root.findViewById<View>(R.id.roamConsole)
         val chipView = root.findViewById<View>(R.id.roamConsoleChip)
         val hintView = root.findViewById<View>(R.id.roamHint)
@@ -425,6 +464,8 @@ class FreeRoamFragment : Fragment() {
         ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             setTopMargin(topPanel, dp(10) + bars.top)
+            // 顶栏 50dp + 上下留白：图层胶囊紧贴在搜索面板下方
+            setTopMargin(layerBar, dp(68) + bars.top)
             setBottomMargin(consoleView, dp(82) + bars.bottom)
             setBottomMargin(chipView, dp(92) + bars.bottom)
             setBottomMargin(hintView, dp(322) + bars.bottom)
@@ -496,6 +537,8 @@ class FreeRoamFragment : Fragment() {
         targetText.text = String.format(Locale.US, "目标：%.5f, %.5f", lat, lng)
         targetBar.visibility = View.VISIBLE
         hint.visibility = View.GONE
+        // 面板从 GONE 转 VISIBLE：闸门不会给不可见视图派发帧，这里主动补一次采样
+        com.zcshou.gogogo.run.ui.glass.GlassRenderGate.requestRefresh(220L)
     }
 
     private fun clearTarget() {
@@ -529,16 +572,21 @@ class FreeRoamFragment : Fragment() {
     }
 
     private fun locateReal(silent: Boolean = false) {
-        val granted = ContextCompat.checkSelfPermission(
-            requireContext(), android.Manifest.permission.ACCESS_FINE_LOCATION
+        val ctx = context ?: return
+        val hasFine = ContextCompat.checkSelfPermission(
+            ctx, android.Manifest.permission.ACCESS_FINE_LOCATION
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (!granted) {
+        val hasCoarse = ContextCompat.checkSelfPermission(
+            ctx, android.Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!hasFine && !hasCoarse) {
             if (!silent) locationPermission.launch(android.Manifest.permission.ACCESS_FINE_LOCATION)
             return
         }
         viewLifecycleOwner.lifecycleScope.launch {
-            if (!silent) toast("正在获取真实位置…")
-            val loc = RealLocationSampler.sample(requireContext())
+            if (!silent && isAdded) toast("正在获取真实位置…")
+            val loc = RealLocationSampler.sample(ctx.applicationContext)
+            if (!isAdded || view == null) return@launch
             if (loc == null) {
                 if (!silent) toast("暂未获取到真实位置，请检查定位权限")
                 return@launch
@@ -586,7 +634,7 @@ class FreeRoamFragment : Fragment() {
         }
         GlassDialogs.builder(requireContext())
             .setTitle("收藏这个地点")
-            .setMessage("最多保存 5 个常用地标，点击胶囊即可一键飞跃")
+            .setMessage("最多保存 24 个常用地标；长按胶囊可置顶到摇杆快捷条")
             .setView(input)
             .setPositiveButton("收藏") { _, _ ->
                 val name = input.text.toString().trim().ifEmpty { defaultName }
@@ -607,7 +655,7 @@ class FreeRoamFragment : Fragment() {
         favScroll.visibility = if (favorites.isEmpty()) View.GONE else View.VISIBLE
         favorites.forEach { favorite ->
             val chip = TextView(requireContext()).apply {
-                text = favorite.name
+                text = if (favorite.pinned) "★ ${favorite.name}" else favorite.name
                 textSize = 11f
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.END
@@ -622,15 +670,7 @@ class FreeRoamFragment : Fragment() {
                 background = ContextCompat.getDrawable(requireContext(), R.drawable.bg_secondary_button)
                 setOnClickListener { centerMap(favorite.lat, favorite.lng, 17f) }
                 setOnLongClickListener {
-                    GlassDialogs.builder(requireContext())
-                        .setTitle("删除收藏？")
-                        .setMessage(favorite.name)
-                        .setPositiveButton("删除") { _, _ ->
-                            RunPrefs.removeFavorite(requireContext(), favorite.name)
-                            renderFavorites()
-                        }
-                        .setNegativeButton("取消", null)
-                        .show()
+                    showFavoriteMenu(favorite)
                     true
                 }
             }
@@ -640,6 +680,54 @@ class FreeRoamFragment : Fragment() {
             ).apply { marginEnd = dp(6) }
             favRow.addView(chip, lp)
         }
+    }
+
+    /** 长按常用地标：置顶 / 改标签 / 删除（置顶项会出现在悬浮摇杆快捷条最前） */
+    private fun showFavoriteMenu(favorite: RunPrefs.Favorite) {
+        val actions = arrayOf(
+            if (favorite.pinned) "取消置顶" else "置顶到摇杆快捷条",
+            "修改标签（当前：${favorite.tag}）",
+            "删除地标"
+        )
+        GlassDialogs.builder(requireContext())
+            .setTitle(favorite.name)
+            .setItems(actions) { _, which ->
+                when (which) {
+                    0 -> {
+                        RunPrefs.setFavoritePinned(requireContext(), favorite.name, !favorite.pinned)
+                        renderFavorites()
+                        toast(if (favorite.pinned) "已取消置顶" else "已置顶，摇杆面板里可直接飞跃")
+                    }
+                    1 -> showFavoriteTagDialog(favorite)
+                    else -> {
+                        RunPrefs.removeFavorite(requireContext(), favorite.name)
+                        renderFavorites()
+                        toast("已删除「${favorite.name}」")
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showFavoriteTagDialog(favorite: RunPrefs.Favorite) {
+        val input = EditText(requireContext()).apply {
+            com.zcshou.gogogo.run.ui.widget.DialogStyler.styleInput(this)
+            setText(favorite.tag)
+            setSelection(text.length)
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        GlassDialogs.builder(requireContext())
+            .setTitle("地标标签")
+            .setMessage("如「公园」「公司」「校园」，最多 6 个字")
+            .setView(input)
+            .setPositiveButton("保存") { _, _ ->
+                RunPrefs.setFavoriteTag(requireContext(), favorite.name, input.text.toString())
+                renderFavorites()
+                toast("标签已更新")
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     // ---------------- 录制为路线 ----------------
@@ -770,13 +858,115 @@ class FreeRoamFragment : Fragment() {
     private fun doSearch() {
         val kw = searchInput.text.toString().trim()
         if (kw.isEmpty()) {
-            toast("请输入搜索关键词")
+            toast("请输入搜索关键词或经纬度")
             return
+        }
+        // 直接粘贴经纬度：不走百度文本联想，按坐标系换算后落标预览
+        when (val coord = CoordInputParser.parse(kw)) {
+            is CoordInputParser.Result.Parsed -> {
+                hideKeyboard()
+                showCoordDatumChooser(coord)
+                return
+            }
+            CoordInputParser.Result.OutOfRange -> {
+                toast("坐标越界：纬度需在 -90~90、经度需在 -180~180")
+                return
+            }
+            CoordInputParser.Result.NotCoordinate -> Unit
         }
         suggestionSearch.requestSuggestion(
             SuggestionSearchOption().keyword(kw).city("全国")
         )
         hideKeyboard()
+    }
+
+    /** 坐标落标前先确认坐标系：大陆三种坐标系偏差可达数百米 */
+    private fun showCoordDatumChooser(coord: CoordInputParser.Result.Parsed) {
+        val title = String.format(
+            Locale.US,
+            if (coord.swapped) {
+                "疑似经度在前，已纠正为 %.5f, %.5f"
+            } else {
+                "坐标 %.5f, %.5f"
+            },
+            coord.lat,
+            coord.lng
+        )
+        val options = arrayOf(
+            "按 WGS-84（原始 GPS）空降",
+            "按 GCJ-02（高德 / 腾讯）纠偏空降",
+            "按 BD-09（百度拾取）纠偏空降"
+        )
+        GlassDialogs.builder(requireContext())
+            .setTitle(title)
+            .setItems(options) { _, which ->
+                val wgs = when (which) {
+                    0 -> TrackMathUtils.LatLng(coord.lat, coord.lng)
+                    1 -> CoordTransformUtil.gcj02ToWgs84(coord.lat, coord.lng)
+                        .let { TrackMathUtils.LatLng(it.lat, it.lng) }
+                    else -> CoordTransformUtil.bd09ToWgs84(coord.lat, coord.lng)
+                        .let { TrackMathUtils.LatLng(it.lat, it.lng) }
+                }
+                dropTargetAtWgs(wgs, which)
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 按 WGS-84 落点（内部唯一事实来源），地图侧再换算成 BD-09 渲染 */
+    private fun dropTargetAtWgs(wgs: TrackMathUtils.LatLng, datum: Int) {
+        pendingTarget = wgs
+        val bd = CoordTransformUtil.wgs84ToBd09(wgs.lat, wgs.lng)
+        showTarget(BdLatLng(bd.lat, bd.lng), wgs.lat, wgs.lng)
+        centerMap(wgs.lat, wgs.lng, 17f)
+        val label = when (datum) {
+            0 -> "WGS-84"
+            1 -> "GCJ-02 已纠偏"
+            else -> "BD-09 已纠偏"
+        }
+        toast("已按 $label 落标，点「空降到此位置」出发")
+    }
+
+    /** 图层切换：卫星图必须摘掉自定义颜色矩阵，否则整张卫星底片会被反相 */
+    private fun applyRoamLayer(layer: RoamLayer) {
+        mapLayer = layer
+        if (!::baiduMap.isInitialized) return
+        runCatching {
+            when (layer) {
+                RoamLayer.DARK -> {
+                    baiduMap.setMapType(BaiduMap.MAP_TYPE_NORMAL)
+                    MapStyleHelper.applyDark(mapView)
+                }
+                RoamLayer.NORMAL -> {
+                    baiduMap.setMapType(BaiduMap.MAP_TYPE_NORMAL)
+                    MapStyleHelper.applyLight(mapView)
+                }
+                RoamLayer.SAT -> {
+                    MapStyleHelper.disable(mapView)
+                    baiduMap.setMapType(BaiduMap.MAP_TYPE_SATELLITE)
+                }
+            }
+        }
+        renderLayerChips()
+    }
+
+    private fun renderLayerChips() {
+        if (!::layerDark.isInitialized) return
+        val ctx = context ?: return
+        listOf(
+            layerDark to RoamLayer.DARK,
+            layerNormal to RoamLayer.NORMAL,
+            layerSat to RoamLayer.SAT
+        ).forEach { (chip, candidate) ->
+            val on = candidate == mapLayer
+            chip.isSelected = on
+            chip.setTextColor(
+                ContextCompat.getColor(
+                    ctx,
+                    if (on) R.color.pf_on_primary else R.color.pf_text_secondary
+                )
+            )
+        }
     }
 
     private fun hideKeyboard() {
@@ -801,9 +991,9 @@ class FreeRoamFragment : Fragment() {
         )
     }
 
-    private fun drawTrail(trail: List<TrackMathUtils.LatLng>) {
-        if (trail.size == lastTrailSize) return
-        lastTrailSize = trail.size
+    private fun drawTrail(trail: List<TrackMathUtils.LatLng>, trailSeq: Long) {
+        if (trailSeq == lastTrailSeq) return
+        lastTrailSeq = trailSeq
         if (trail.size < 2) {
             trailOverlay?.remove()
             trailOverlay = null

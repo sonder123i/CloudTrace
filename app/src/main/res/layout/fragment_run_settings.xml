@@ -259,6 +259,7 @@
                     </RadioGroup>
 
                     <TextView
+                        android:id="@+id/mascotModeHint"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="2dp"
@@ -295,6 +296,16 @@
                         android:layout_gravity="center_horizontal"
                         android:layout_marginTop="8dp"
                         android:visibility="gone" />
+
+                    <!-- 图鉴入口：已收集 X/10，点开看全部拍立得与解锁条件 -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnMascotGallery"
+                        style="@style/Widget.App.Button.Secondary"
+                        android:layout_width="match_parent"
+                        android:layout_height="42dp"
+                        android:layout_marginTop="10dp"
+                        android:text="鲸鲸图鉴 · 已收集 0/10"
+                        android:textSize="13sp" />
                 </LinearLayout>
             </com.zcshou.gogogo.run.ui.glass.LiquidGlassContainer>
 

@@ -18,6 +18,10 @@ object RouteShareCodec {
 
     private val PREFIXES = listOf(BrandConfig.SHARE_PREFIX, BrandConfig.LEGACY_PREFIX)
     private const val MAX_DECODE_BYTES = 4 * 1024 * 1024
+    /** 粘贴整段聊天记录的防御上限：正常口令远小于此，超过即视为误粘贴直接拒绝。 */
+    private const val MAX_INPUT_CHARS = 256 * 1024
+    /** 路线名入库与 UI 展示的长度上限。 */
+    private const val MAX_NAME_CHARS = 64
 
     private val TRAILING_PUNCTUATION = charArrayOf(
         '。', '，', ',', '.', ';', '；', '!', '！', '?', '？',
@@ -40,13 +44,17 @@ object RouteShareCodec {
 
     private fun extractWith(text: String, prefix: String): String? {
         val trimmed = text.trim()
-        val start = trimmed.indexOf(prefix, ignoreCase = true)
-        if (start < 0) return null
-        val token = trimmed.substring(start + prefix.length)
-            .takeWhile { !it.isWhitespace() }
-            .trimEnd(*TRAILING_PUNCTUATION)
-        if (token.isEmpty()) return null
-        return prefix + token
+        var fromIndex = 0
+        while (fromIndex < trimmed.length) {
+            val start = trimmed.indexOf(prefix, startIndex = fromIndex, ignoreCase = true)
+            if (start < 0) return null
+            val token = trimmed.substring(start + prefix.length)
+                .takeWhile { !it.isWhitespace() }
+                .trimEnd(*TRAILING_PUNCTUATION)
+            if (token.isNotEmpty()) return prefix + token
+            fromIndex = start + prefix.length
+        }
+        return null
     }
 
     fun encode(name: String, points: List<LatLng>, clockwise: Boolean): String {
@@ -67,6 +75,7 @@ object RouteShareCodec {
     }
 
     fun decode(text: String): SharedRoute? = runCatching {
+        if (text.length > MAX_INPUT_CHARS) return null
         // 分享时会把口令夹在说明文字里发出；导入侧要允许直接粘贴整段聊天内容。
         val code = extractCode(text)
         val raw = if (code != null) {
@@ -89,7 +98,11 @@ object RouteShareCodec {
             if (lat in -90.0..90.0 && lng in -180.0..180.0) LatLng(lat, lng) else null
         }
         if (points.size < 2) return null
-        SharedRoute(name = name.ifBlank { "分享路线" }, points = points, clockwise = clockwise)
+        SharedRoute(
+            name = name.take(MAX_NAME_CHARS).ifBlank { "分享路线" },
+            points = points,
+            clockwise = clockwise
+        )
     }.getOrNull()
 
     private fun decodeBase64(raw: String): ByteArray? {

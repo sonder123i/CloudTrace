@@ -1,7 +1,5 @@
 package com.zcshou.gogogo.run.ui.glass
 
-import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.InsetDrawable
 import android.view.View
 import androidx.coordinatorlayout.widget.CoordinatorLayout
 import androidx.fragment.app.DialogFragment
@@ -23,7 +21,12 @@ import com.zcshou.gogogo.R
 object SheetGlass {
 
     private const val SHEET_RADIUS_DP = 28f
-    private const val CORE_INSET_DP = 8f
+
+    /** 阅读内芯羽化带宽。 */
+    private const val CORE_FEATHER_DP = 12f
+
+    /** 顶部把手栏透光区高度。 */
+    private const val HANDLE_CLEARANCE_DP = 24f
 
     /**
      * 把 [glass] 接到当前 Activity 的背景上，并清掉弹层各级底色。
@@ -50,22 +53,24 @@ object SheetGlass {
     /**
      * BottomSheet 同样要承载密集文字和按钮。只靠 glassTint 时，首页的黑色
      * 主按钮会从弹层里透出一块深色胶囊（实测「一键前往授权」后面发黑）。
-     * 和玻璃弹窗保持一致：内部垫 96% 实底内芯，顶部留 8dp 玻璃边。
+     *
+     * 这里用羽化内芯替代旧的 8dp 实底块：外圈折射区到阅读区是 12dp 连续过渡，
+     * 并把顶部 [HANDLE_CLEARANCE_DP] 让给把手栏 —— 那一段直接透出底下页面，
+     * 手指抓住把手时能看见下滑的列表在动，弹层才像"浮"着而不是"贴"住。
      */
     private fun attachReadabilityCore(glass: LiquidGlassView) {
         glass.post {
             val sheetContent = glass.getChildAt(0) ?: return@post
             if (sheetContent.background != null) return@post
             val density = glass.resources.displayMetrics.density
-            val inset = (CORE_INSET_DP * density).toInt()
-            val corner = (SHEET_RADIUS_DP * density - inset).coerceAtLeast(0f)
-            val core = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                // 顶部两角跟随玻璃圆角，底部贴屏幕边缘保持直角
-                cornerRadii = floatArrayOf(corner, corner, corner, corner, 0f, 0f, 0f, 0f)
-                setColor(glass.context.getColor(R.color.dr_dialog_core))
-            }
-            sheetContent.background = InsetDrawable(core, inset, inset, inset, 0)
+            val corner = SHEET_RADIUS_DP * density
+            sheetContent.background = FeatheredCoreDrawable(
+                context = glass.context,
+                // 顶部两角跟随玻璃圆角，底部贴屏幕边缘保持直角（TL/TR/BR/BL）
+                cornerRadiiPx = floatArrayOf(corner, corner, 0f, 0f),
+                featherPx = CORE_FEATHER_DP * density,
+                topClearancePx = HANDLE_CLEARANCE_DP * density
+            )
         }
     }
 

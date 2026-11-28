@@ -15,6 +15,15 @@
         android:layout_height="0dp"
         android:layout_weight="1" />
 
+    <!-- 云迹徽记：液态玻璃 + 双浪 + 跑者 + 云迹弧线 + 玻璃 Pin，
+         循环轻呼吸与光纤绕边，替代原纯文字首屏的单调留白。 -->
+    <com.zcshou.gogogo.run.ui.splash.CloudTraceEmblemView
+        android:id="@+id/welcomeEmblem"
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:layout_marginBottom="24dp"
+        android:importantForAccessibility="no" />
+
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

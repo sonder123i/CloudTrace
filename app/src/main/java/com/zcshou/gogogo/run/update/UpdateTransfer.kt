@@ -159,6 +159,7 @@ class UpdateTransfer(
                     updateError("DOWNLOAD_SIZE", "下载文件长度与清单不一致")
                 }
                 var received = 0L
+                var lastProgressAt = 0L
                 RandomAccessFile(file, "rw").use { output ->
                     output.setLength(offset)
                     output.seek(offset)
@@ -174,7 +175,11 @@ class UpdateTransfer(
                             }
                             output.write(buffer, 0, n)
                             received += n
-                            progress(offset + received, newEtag)
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (now - lastProgressAt >= 200L || received == expected) {
+                                lastProgressAt = now
+                                progress(offset + received, newEtag)
+                            }
                         }
                     }
                     output.fd.sync()

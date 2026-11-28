@@ -54,13 +54,25 @@ class StatusOrbView @JvmOverloads constructor(
             }
         )
         haloPaint.color = corePaint.color
-        // 正常与异常都呼吸，只有中性灰保持静止
-        if (ok == null) stopBreathing() else startBreathing()
+        // 正常与异常都呼吸，只有中性灰保持静止；状态在红/绿间切换时重建动画以切换周期
+        if (ok == null) {
+            stopBreathing()
+        } else {
+            animator?.cancel()
+            animator = null
+            startBreathing()
+        }
         invalidate()
     }
 
     private fun startBreathing() {
-        if (animator != null) return
+        if (animator != null || !isShown) return
+        if (com.zcshou.gogogo.run.data.prefs.DisplayPrefs.quality(context) ==
+            com.zcshou.gogogo.run.data.prefs.DisplayPrefs.RenderQuality.BALANCED
+        ) {
+            breath = 1f
+            return
+        }
         // 绿色「安静呼吸」比红色「告警呼吸」更慢更浅：周期 2.6s vs 1.9s
         val alert = state == false
         animator = ValueAnimator.ofFloat(0f, 1f).apply {

@@ -96,13 +96,21 @@ class GlassProbeActivity : AppCompatActivity() {
 
         setContentView(root)
 
+        // 探针页也要登记静态画布宿主：否则 LiquidGlassContainer 找不到快照，
+        // 只能回退静态磨砂 —— 那样就验证不到 AGSL 共享折射这条路径。
+        // 登记色块条本身（不是含玻璃的 root），避免把玻璃自己画进自己的背景。
+        StaticBackdropProvider.attach(bars)
+
         // 首帧布局完成后再采样一次，确保背景色块已进入快照
         root.postDelayed({
             glass.refreshBackdrop()
+            StaticBackdropProvider.invalidate(bars)
+            glass.invalidate()
             Log.i(
                 "LiquidGlass",
                 "probe tier=${DeepRunGlassManager.tier(this)} " +
-                    "suppressed=${DeepRunGlassManager.isRenderSuppressed}"
+                    "suppressed=${DeepRunGlassManager.isRenderSuppressed} " +
+                    "w=${glass.width} h=${glass.height}"
             )
         }, 600)
 

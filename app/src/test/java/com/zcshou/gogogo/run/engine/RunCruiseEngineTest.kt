@@ -2,7 +2,10 @@ package com.zcshou.gogogo.run.engine
 
 import com.zcshou.gogogo.run.bridge.ILocationInjector
 import com.zcshou.gogogo.run.data.db.RunRouteEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -291,5 +294,79 @@ class RunCruiseEngineTest {
         assertTrue("基础注入应产生足够帧，实际=$everyTick", everyTick > 40)
         assertEquals("节流 2 倍应恰好一半帧", everyTick / 2, everyOtherTick)
         assertEquals("节流不应改变里程", metersFast, metersSlow, 0.5)
+    }
+
+    /** 记录落库的假仓库：只关心结束记录本身 */
+    private class RecordingSink : RunRecordSink {
+        val records = java.util.concurrent.CopyOnWriteArrayList<com.zcshou.gogogo.run.data.db.RunRecordEntity>()
+
+        override suspend fun addRecord(
+            record: com.zcshou.gogogo.run.data.db.RunRecordEntity
+        ): Long {
+            records += record
+            return records.size.toLong()
+        }
+
+        override suspend fun clearSnapshot() = Unit
+        override suspend fun saveSnapshot(snapshot: com.zcshou.gogogo.run.data.prefs.RunSnapshot) = Unit
+    }
+
+    /**
+     * 结束记录必须带真实分段与累计爬升：分段总距离≈总里程，每段耗时/配速为正，
+     * 且能被 RunSplitCodec 原样解析回来（战报复盘的唯一数据来源）。
+     */
+    @Test
+    fun finish_writesRealSplitsAndElevationGain() = runBlocking {
+        val clock = FakeClock()
+        val sink = RecordingSink()
+        val engine = RunCruiseEngine(
+            env = FakeEnv(clock),
+            injector = RecordingInjector(),
+            repository = sink,
+            tickMillis = 5L,
+            random = Random(3),
+            settleMillis = 0L,
+            cooldownMillis = 0L,
+            randomStartSlice = false
+        )
+        // 假时钟不会自动走：后台按 200ms/2ms 推进，让分段耗时与配速都是正常量级
+        val ticker = launch(Dispatchers.Default) {
+            while (isActive) {
+                clock.advance(200)
+                delay(2)
+            }
+        }
+        engine.startWithPoints(
+            route = route(),
+            densePoints = densePoints(),
+            targetKm = 0.9f,
+            targetPaceSecPerKm = 340,
+            distanceJitterMeters = 0,
+            enableLaneDrift = false,
+            enableCooldownWalk = false
+        )
+        awaitPhase(engine, RunPhase.FINISHED, 90_000)
+        ticker.cancel()
+        withTimeout(5_000) {
+            while (sink.records.isEmpty()) delay(5)
+        }
+        val record = sink.records.first()
+        val splits = RunSplitCodec.decode(record.splitsJson)
+        assertTrue("应记录真实分段，实际=$splits", splits.size >= 2)
+        assertEquals(splits.size, splits.map { it.idx }.distinct().size)
+        assertTrue(
+            "每段都应有正距离/耗时/配速",
+            splits.all { it.distM > 0 && it.durSec > 0 && it.paceSec > 0 }
+        )
+        val sum = splits.sumOf { it.distM }
+        assertTrue(
+            "分段总距离应≈总里程 sum=$sum total=${record.actualDistanceMeters}",
+            kotlin.math.abs(sum - record.actualDistanceMeters) <= 2.0
+        )
+        assertTrue(
+            "累计爬升应为正，实际=${record.elevationGainMeters}",
+            record.elevationGainMeters > 0.0
+        )
+        assertEquals(PaceStrategy.STEADY.name, record.paceStrategy)
     }
 }

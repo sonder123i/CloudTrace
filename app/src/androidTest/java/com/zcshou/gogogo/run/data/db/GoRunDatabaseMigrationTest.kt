@@ -68,6 +68,74 @@ class GoRunDatabaseMigrationTest {
         db.close()
     }
 
+    @Test
+    fun migrate3To4_createsIndices() {
+        helper.createDatabase(DB_NAME, 3).close()
+        val db = helper.runMigrationsAndValidate(DB_NAME, 4, true, GoRunDatabase.MIGRATION_3_4)
+        db.close()
+    }
+
+    @Test
+    fun migrate4To5_keepsRowsAndFillsDefaults() {
+        helper.createDatabase(DB_NAME, 4).use { db ->
+            db.execSQL(
+                "INSERT INTO run_routes (name, buildMode, singleLapMeters, isClosedLoop, isClockwise, " +
+                    "denseWaypointsJson, anchorNodesJson, baseAltitudeMeters, lastTargetDistanceKm, " +
+                    "lastTargetPaceSecPerKm, lastSmartJitterEnabled, createdAt) " +
+                    "VALUES ('南操场', 'TRACK_SPLINE', 400.0, 1, 1, '[]', '[]', 48.5, 3.2, 335, 1, 1000)"
+            )
+            db.execSQL(
+                "INSERT INTO run_schedules (routeId, title, targetDistanceKm, distanceJitterMeters, " +
+                    "targetPaceSecPerKm, enableLaneDrift, enableCooldownWalk, isScheduleEnabled, " +
+                    "windowStartMinutes, windowJitterMinutes, repeatDaysMask, autoIsolateWifi, linkedTargetAppPkg) " +
+                    "VALUES (1, '晚间有氧', 3.0, 150, 340, 1, 1, 1, 1110, 8, 31, 1, NULL)"
+            )
+            db.execSQL(
+                "INSERT INTO run_records (routeId, routeName, actualDistanceMeters, durationSeconds, " +
+                    "averagePaceSec, startedAt, status) " +
+                    "VALUES (1, '南操场', 3040.0, 1030, 339, 2000, 'COMPLETED')"
+            )
+        }
+        val db = helper.runMigrationsAndValidate(DB_NAME, 5, true, GoRunDatabase.MIGRATION_4_5)
+
+        // 旧路线：一行都不能丢，新列取安全默认值
+        db.query(
+            "SELECT name, singleLapMeters, baseAltitudeMeters, lastTargetDistanceKm, isPinned, tag, elevationProfileJson FROM run_routes"
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("南操场", c.getString(0))
+            assertEquals(400.0, c.getDouble(1), 1e-9)
+            assertEquals(48.5, c.getDouble(2), 1e-9)
+            assertEquals(3.2f, c.getFloat(3), 1e-6f)
+            assertEquals(0, c.getInt(4))
+            assertEquals("", c.getString(5))
+            assertTrue(c.isNull(6))
+            assertEquals(1, c.count)
+        }
+        // 旧定时：跳过日为空、策略回落到匀速
+        db.query("SELECT title, repeatDaysMask, isScheduleEnabled, skipDateIso, paceStrategy FROM run_schedules").use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("晚间有氧", c.getString(0))
+            assertEquals(31, c.getInt(1))
+            assertEquals(1, c.getInt(2))
+            assertTrue(c.isNull(3))
+            assertEquals("STEADY", c.getString(4))
+        }
+        // 旧跑次：分段为空（复盘回退估算）、爬升 0、策略匀速
+        db.query(
+            "SELECT routeName, actualDistanceMeters, durationSeconds, splitsJson, paceStrategy, elevationGainMeters FROM run_records"
+        ).use { c ->
+            assertTrue(c.moveToFirst())
+            assertEquals("南操场", c.getString(0))
+            assertEquals(3040.0, c.getDouble(1), 1e-9)
+            assertEquals(1030, c.getInt(2))
+            assertTrue(c.isNull(3))
+            assertEquals("STEADY", c.getString(4))
+            assertEquals(0.0, c.getDouble(5), 1e-9)
+        }
+        db.close()
+    }
+
     private companion object {
         const val DB_NAME = "go-run-migration-test.db"
     }

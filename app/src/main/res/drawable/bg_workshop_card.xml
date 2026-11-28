@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 路线工坊：无边框圆角玻璃卡，与主卡片保持同一材质语言 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="@color/pf_card" />
-    <corners android:radius="24dp" />
-</shape>

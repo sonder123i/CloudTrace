@@ -50,10 +50,69 @@ class RoutePreviewView @JvmOverloads constructor(
         alpha = 46
     }
 
+    private val cachedPath = Path()
+    private var cachedStartX = 0f
+    private var cachedStartY = 0f
+    private var hasCachedPath = false
+
     fun setRoute(points: List<TrackMathUtils.LatLng>, closed: Boolean) {
         this.points = points
         this.closed = closed
+        rebuildPath()
         invalidate()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        rebuildPath()
+    }
+
+    private fun rebuildPath() {
+        cachedPath.reset()
+        hasCachedPath = false
+        if (points.size < 2 || width <= 0 || height <= 0) return
+
+        val lat0 = points.sumOf { it.lat } / points.size
+        val lng0 = points.sumOf { it.lng } / points.size
+        val metersPerLng = 111320.0 * cos(Math.toRadians(lat0))
+        val lx = FloatArray(points.size)
+        val ly = FloatArray(points.size)
+        var minX = Float.MAX_VALUE
+        var maxX = -Float.MAX_VALUE
+        var minY = Float.MAX_VALUE
+        var maxY = -Float.MAX_VALUE
+        for (i in points.indices) {
+            val x = ((points[i].lng - lng0) * metersPerLng).toFloat()
+            val y = ((points[i].lat - lat0) * 110574.0).toFloat()
+            lx[i] = x
+            ly[i] = y
+            if (x < minX) minX = x
+            if (x > maxX) maxX = x
+            if (y < minY) minY = y
+            if (y > maxY) maxY = y
+        }
+        val spanX = max(maxX - minX, 1f)
+        val spanY = max(maxY - minY, 1f)
+        val pad = 24f * density
+        val scale = min((width - 2 * pad) / spanX, (height - 2 * pad) / spanY)
+        val centerX = width / 2f
+        val centerY = height / 2f
+        val midX = (minX + maxX) / 2f
+        val midY = (minY + maxY) / 2f
+
+        for (i in points.indices) {
+            val vx = centerX + (lx[i] - midX) * scale
+            val vy = centerY - (ly[i] - midY) * scale
+            if (i == 0) {
+                cachedStartX = vx
+                cachedStartY = vy
+                cachedPath.moveTo(vx, vy)
+            } else {
+                cachedPath.lineTo(vx, vy)
+            }
+        }
+        if (closed) cachedPath.close()
+        hasCachedPath = true
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -69,39 +128,9 @@ class RoutePreviewView @JvmOverloads constructor(
             canvas.drawLine(0f, gy, width.toFloat(), gy, gridPaint)
             gy += step
         }
-        if (points.size < 2) return
-
-        val lat0 = points.map { it.lat }.average()
-        val lng0 = points.map { it.lng }.average()
-        val metersPerLng = 111320.0 * cos(Math.toRadians(lat0))
-        val local = points.map {
-            ((it.lng - lng0) * metersPerLng).toFloat() to ((it.lat - lat0) * 110574.0).toFloat()
-        }
-        val minX = local.minOf { it.first }
-        val maxX = local.maxOf { it.first }
-        val minY = local.minOf { it.second }
-        val maxY = local.maxOf { it.second }
-        val spanX = max(maxX - minX, 1f)
-        val spanY = max(maxY - minY, 1f)
-        val pad = 24f * density
-        val scale = min((width - 2 * pad) / spanX, (height - 2 * pad) / spanY)
-        val centerX = width / 2f
-        val centerY = height / 2f
-        val midX = (minX + maxX) / 2f
-        val midY = (minY + maxY) / 2f
-
-        fun viewX(east: Float) = centerX + (east - midX) * scale
-        fun viewY(north: Float) = centerY - (north - midY) * scale
-
-        val path = Path()
-        local.forEachIndexed { index, (east, north) ->
-            if (index == 0) path.moveTo(viewX(east), viewY(north))
-            else path.lineTo(viewX(east), viewY(north))
-        }
-        if (closed) path.close()
-        canvas.drawPath(path, glowPaint)
-        canvas.drawPath(path, pathPaint)
-
-        canvas.drawCircle(viewX(local.first().first), viewY(local.first().second), 4f * density, startPaint)
+        if (!hasCachedPath) return
+        canvas.drawPath(cachedPath, glowPaint)
+        canvas.drawPath(cachedPath, pathPaint)
+        canvas.drawCircle(cachedStartX, cachedStartY, 4f * density, startPaint)
     }
 }

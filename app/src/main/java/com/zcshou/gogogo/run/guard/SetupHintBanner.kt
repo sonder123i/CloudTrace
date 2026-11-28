@@ -11,14 +11,15 @@ import android.widget.TextView
 import android.widget.Toast
 import com.zcshou.gogogo.R
 import com.zcshou.gogogo.run.ui.theme.ThemeHelper
+import java.lang.ref.WeakReference
 
 /**
  * 跳转系统设置期间的顶部迷你提示横幅（需悬浮窗权限；无权限降级 Toast）。
  */
 object SetupHintBanner {
 
-    private var view: TextView? = null
-    private var windowManager: WindowManager? = null
+    private var viewRef: WeakReference<TextView>? = null
+    private var wmRef: WeakReference<WindowManager>? = null
     private val handler = Handler(Looper.getMainLooper())
     private val hideRunnable = Runnable { hide() }
 
@@ -29,7 +30,8 @@ object SetupHintBanner {
             return
         }
         val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val tv = view ?: TextView(ctx).apply {
+        val existing = viewRef?.get()?.takeIf { it.isAttachedToWindow }
+        val tv = existing ?: TextView(ctx).apply {
             setBackgroundResource(R.drawable.bg_capsule_solid)
             setTextColor(ctx.getColor(R.color.pf_text_primary))
             textSize = 12f
@@ -37,7 +39,7 @@ object SetupHintBanner {
             maxWidth = dp(ctx, 320)
         }
         tv.text = text
-        if (view == null) {
+        if (existing == null) {
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -52,8 +54,8 @@ object SetupHintBanner {
                 y = dp(ctx, 44)
             }
             runCatching { wm.addView(tv, params) }.onSuccess {
-                view = tv
-                windowManager = wm
+                viewRef = WeakReference(tv)
+                wmRef = WeakReference(wm)
             }.onFailure { return }
         }
         handler.removeCallbacks(hideRunnable)
@@ -62,10 +64,13 @@ object SetupHintBanner {
 
     fun hide() {
         handler.removeCallbacks(hideRunnable)
-        val tv = view ?: return
-        runCatching { windowManager?.removeViewImmediate(tv) }
-        view = null
-        windowManager = null
+        val tv = viewRef?.get()
+        val wm = wmRef?.get()
+        viewRef = null
+        wmRef = null
+        if (tv != null) {
+            runCatching { wm?.removeViewImmediate(tv) }
+        }
     }
 
     private fun dp(context: Context, value: Int): Int =

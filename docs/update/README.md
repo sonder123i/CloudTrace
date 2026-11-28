@@ -71,7 +71,10 @@ GOGOGO_UPDATE_ALLOWED_HOSTS=<你的域名>,gitee.com,foruda.gitee.com,github.com
    产物：`app/build/outputs/apk/release/CloudTrace_<version>_arm64-v8a_release.apk`
 
 3. 上传 APK 到 GitHub Release / Gitee Release，拿到两个下载地址。
-4. 写更新日志，例如 `release-notes/v1.13.0.md`。
+4. 写更新日志，例如 `release-notes/v1.14.4.md`。
+   这份文件会放进签名清单，并在更新弹窗的「本次更新」里展示。请按用户视角写：
+   先说用户能感知到什么，不写类名、函数名和排查过程；版本号标题和「校验」段会被
+   `UpdateNotesFormatter` 裁掉，其余内容直接给用户看。
 5. 生成签名清单：
 
    ```bash

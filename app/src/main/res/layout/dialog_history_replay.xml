@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- V4.0：底色交给窗口的 bg_glass_dialog（跨窗模糊 + 液态玻璃），内容层保持透明 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@android:color/transparent"
@@ -27,6 +28,113 @@
     <com.zcshou.gogogo.run.ui.home.RunReplayView
         android:id="@+id/historyReplayView"
         android:layout_width="match_parent"
-        android:layout_height="360dp"
+        android:layout_height="320dp"
         android:layout_marginTop="8dp" />
+
+    <!-- 回放控制：播放/暂停 + 进度拖动 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/replayPlay"
+            android:layout_width="52dp"
+            android:layout_height="30dp"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="播放"
+            android:textSize="11sp" />
+
+        <SeekBar
+            android:id="@+id/replaySeek"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:max="1000"
+            android:progress="0"
+            android:progressTint="@color/pf_volt"
+            android:thumbTint="@color/pf_on_primary" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/replayProgress"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:fontFeatureSettings="tnum"
+            android:textColor="@color/pf_text_secondary"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/replaySpeed1"
+            android:layout_width="34dp"
+            android:layout_height="26dp"
+            android:layout_marginStart="5dp"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="1×"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/replaySpeed2"
+            android:layout_width="34dp"
+            android:layout_height="26dp"
+            android:layout_marginStart="5dp"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="2×"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/replaySpeed4"
+            android:layout_width="34dp"
+            android:layout_height="26dp"
+            android:layout_marginStart="5dp"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="4×"
+            android:textSize="10sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSharePoster"
+            style="@style/Widget.App.Button.Secondary"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:text="分享海报"
+            android:textSize="12sp"
+            app:icon="@drawable/ic_share"
+            app:iconGravity="textStart"
+            app:iconPadding="6dp"
+            app:iconSize="15dp"
+            app:iconTint="@color/pf_text_primary" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSavePoster"
+            style="@style/Widget.App.Button.Secondary"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="保存到相册"
+            android:textSize="12sp" />
+    </LinearLayout>
 </LinearLayout>

@@ -68,11 +68,21 @@
         android:textSize="12sp"
         android:visibility="gone" />
 
+    <TextView
+        android:id="@+id/updateNotesLabel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="本次更新"
+        android:textColor="@color/pf_text_secondary"
+        android:textSize="11sp"
+        android:visibility="gone" />
+
     <com.zcshou.gogogo.run.ui.widget.MaxHeightScrollView
         android:id="@+id/updateNotesScroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="6dp"
         android:background="@drawable/bg_input_recess"
         android:fillViewport="false"
         android:padding="12dp"

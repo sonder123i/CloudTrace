@@ -99,8 +99,12 @@ class MapMascotOverlayView @JvmOverloads constructor(
             view.translationY = -(view.height + dp(4f))
         }
 
-        loadBitmaps()
         visibility = GONE
+    }
+
+    private fun ensureBitmapsLoaded() {
+        if (bitmaps.isNotEmpty()) return
+        loadBitmaps()
     }
 
     private fun loadBitmaps() {
@@ -136,6 +140,7 @@ class MapMascotOverlayView @JvmOverloads constructor(
             visibility = GONE
             return
         }
+        ensureBitmapsLoaded()
         if (!visible) {
             visible = true
             visibility = VISIBLE

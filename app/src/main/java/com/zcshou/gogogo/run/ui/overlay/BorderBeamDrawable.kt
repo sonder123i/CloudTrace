@@ -106,29 +106,59 @@ class BorderBeamDrawable @JvmOverloads constructor(
     }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val headPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bloomPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private val rect = RectF()
     private val path = Path()
+    private val outerClipPath = Path()
     private val measure = PathMeasure()
     private val sweepMatrix = Matrix()
+    private val headMatrix = Matrix()
+    private val bloomMatrix = Matrix()
     private val stampRect = RectF()
     private val posTan = FloatArray(2)
+    private var sweepShader: SweepGradient? = null
+    private var lastSweepIntensity = -1f
+    private var headShader: RadialGradient? = null
+    private var lastHeadIntensity = -1f
+    private var bloomShader: RadialGradient? = null
+    private var lastBloomKey = -1f
 
     private var pathLength = 0f
     private var lastLeft = Int.MIN_VALUE
     private var lastTop = Int.MIN_VALUE
     private var lastRight = Int.MIN_VALUE
     private var lastBottom = Int.MIN_VALUE
+    private var burstStartMs = -1L
+
+    /** 触发一次 480ms 的交互光晕脉冲（展开控制岛/点击控制按钮时调用）。 */
+    fun triggerBurst() {
+        burstStartMs = android.os.SystemClock.uptimeMillis()
+        invalidateSelf()
+    }
+
+    private fun currentBurstFactor(): Float {
+        if (burstStartMs <= 0L) return 0f
+        val elapsed = android.os.SystemClock.uptimeMillis() - burstStartMs
+        if (elapsed !in 0L..480L) {
+            burstStartMs = -1L
+            return 0f
+        }
+        val t = elapsed / 480f
+        val inv = 1f - t
+        return inv * inv
+    }
 
     /**
-     * 流光色：这里必须取**不透明**的色相，透明度统一在绘制时按强度/拖尾曲线乘。
-     * 若直接复用 `dr_prism_sheen_*`（本身就带 20~30% alpha），再乘一次强度会淡到看不见。
+     * 谷歌 AI Mode 五色光谱流光：取**不透明**纯正色相，透明度统一在绘制时按强度/拖尾曲线乘。
+     * 蓝 → 靛紫 → 珊瑚红 → 琥珀金 → 青碧绿，呈现流动玻璃棱镜质感。
      */
     private val beamColors = intArrayOf(
-        opaqueOf(R.color.dr_prism_sheen_a, 0xFFFF8AC8.toInt()),
-        opaqueOf(R.color.dr_prism_sheen_b, 0xFFA78BFA.toInt()),
-        opaqueOf(R.color.dr_prism_sheen_c, 0xFFFFC46B.toInt()),
-        opaqueOf(R.color.dr_prism_sheen_d, 0xFF7DE2FF.toInt())
+        opaqueOf(R.color.dr_beam_blue, 0xFF4285F4.toInt()),
+        opaqueOf(R.color.dr_beam_indigo, 0xFF8B5CF6.toInt()),
+        opaqueOf(R.color.dr_beam_coral, 0xFFEA4335.toInt()),
+        opaqueOf(R.color.dr_beam_amber, 0xFFFBBC04.toInt()),
+        opaqueOf(R.color.dr_beam_teal, 0xFF00BFA5.toInt())
     )
 
     /**
@@ -139,9 +169,9 @@ class BorderBeamDrawable @JvmOverloads constructor(
 
     /**
      * 彗尾色阶：预建 ColorFilter 避免每帧 new 对象。
-     * 步数够多（24）才能让颜色过渡看不出分段，又不至于让 GC 有压力。
+     * 步数够多（28）才能让 5 色过渡看不出分段，又不至于让 GC 有压力。
      */
-    private val tintSteps = 24
+    private val tintSteps = 28
     private val tintFilters: Array<ColorFilter?> by lazy {
         Array(tintSteps) { i ->
             val t = if (tintSteps <= 1) 1f else i / (tintSteps - 1).toFloat()
@@ -149,11 +179,11 @@ class BorderBeamDrawable @JvmOverloads constructor(
         }
     }
 
-    /** 拖尾占周长的比例（呼吸会在它基础上 ±15%）。 */
-    private val tailRatio = 0.30f
+    /** 拖尾占周长的比例（呼吸与交互脉冲会适度拉长）。 */
+    private val tailRatio = 0.34f
 
-    /** 每帧铺贴的光斑数：越多越连续，24 段在 40~290dp 的周长上都看不出接缝。 */
-    private val stamps = 26
+    /** 每帧铺贴的光斑数：32 段让丝滑彗尾在大小面板上都浑然一体。 */
+    private val stamps = 32
 
     override fun draw(canvas: Canvas) {
         if (intensity <= 0.01f) return
@@ -161,8 +191,10 @@ class BorderBeamDrawable @JvmOverloads constructor(
         if (b.isEmpty) return
         if (!ensurePath(b)) return
 
-        drawDispersionRing(canvas, b)
-        drawBeam(canvas)
+        val burst = currentBurstFactor()
+        drawInnerBloom(canvas, b, burst)
+        drawDispersionRing(canvas, b, burst)
+        drawBeam(canvas, burst)
     }
 
     /** 圆角矩形路径只在尺寸变化时重建——PathMeasure 的 setPath 不便宜。 */
@@ -178,6 +210,10 @@ class BorderBeamDrawable @JvmOverloads constructor(
         lastBottom = b.bottom
 
         rect.set(b)
+        val outerR = cornerRadiusPx.coerceAtMost(minOf(rect.width(), rect.height()) / 2f)
+        outerClipPath.reset()
+        outerClipPath.addRoundRect(rect, outerR, outerR, Path.Direction.CW)
+
         val inset = borderWidthPx / 2f
         val radius = (cornerRadiusPx - inset).coerceAtLeast(0f)
         path.reset()
@@ -191,35 +227,79 @@ class BorderBeamDrawable @JvmOverloads constructor(
     }
 
     /**
+     * 局部内溢漫射光（Google AI Mode 核心质感）：只在流光头部内侧 18~28dp 范围内
+     * 透出一小团柔和彩色漫射光，中心面板保持干净中性磨砂，绝不把整块玻璃染脏。
+     */
+    private fun drawInnerBloom(canvas: Canvas, b: android.graphics.Rect, burst: Float) {
+        val headDist = normalize(phase * pathLength)
+        if (!measure.getPosTan(headDist, posTan, null)) return
+
+        val minDim = minOf(b.width(), b.height()).toFloat()
+        val bloomR = (minDim * 0.55f).coerceIn(18f * density, 38f * density) * (1f + 0.35f * burst)
+        val bloomStrength = (intensity * (0.14f + 0.14f * burst)).coerceIn(0f, 0.32f)
+        if (bloomStrength <= 0.01f) return
+
+        var bShader = bloomShader
+        if (bShader == null || kotlin.math.abs(lastBloomKey - bloomStrength) > 0.015f) {
+            bShader = RadialGradient(
+                0f, 0f, 1f,
+                intArrayOf(
+                    withAlpha(beamColors[0], bloomStrength),
+                    withAlpha(beamColors[1], bloomStrength * 0.45f),
+                    Color.TRANSPARENT
+                ),
+                floatArrayOf(0f, 0.48f, 1f),
+                Shader.TileMode.CLAMP
+            )
+            bloomShader = bShader
+            lastBloomKey = bloomStrength
+        }
+
+        bloomMatrix.setScale(bloomR, bloomR)
+        bloomMatrix.postTranslate(posTan[0], posTan[1])
+        bShader.setLocalMatrix(bloomMatrix)
+        bloomPaint.shader = bShader
+
+        val save = canvas.save()
+        canvas.clipPath(outerClipPath)
+        canvas.drawCircle(posTan[0], posTan[1], bloomR, bloomPaint)
+        canvas.restoreToCount(save)
+        bloomPaint.shader = null
+    }
+
+    /**
      * 整圈色散：SweepGradient 按相位旋转。
      *
-     * 它只是「颜色在缓慢流动」，速度不匀看不出来，所以这一层继续用扫描渐变——
-     * 用弧长采样反而要切上百段，得不偿失。浓度受呼吸调制，让整条边跟着一起「起伏」。
-     *
-     * 旋转角必须走**完整 360°**：扫描渐变是周期性的，转到 360° 等价于 0°，
-     * 所以 phase 从 1 回绕到 0 时视觉上是连续的。早期写成 `phase * 180f`，
-     * 结果每圈结束角度从 178° 瞬间跳回 0°，表现为「绕完一圈颜色突变一次」。
+     * 它只是「颜色在缓慢流动」，旋转角按完整 360° 走以保证回绕连续。
      */
-    private fun drawDispersionRing(canvas: Canvas, b: android.graphics.Rect) {
+    private fun drawDispersionRing(canvas: Canvas, b: android.graphics.Rect, burst: Float) {
         val cx = b.exactCenterX()
         val cy = b.exactCenterY()
-        // 不透明色入组，透明度统一由 ringPaint.alpha 控制（否则两层 alpha 相乘会过淡）
-        val colors = intArrayOf(
-            beamColors[0], beamColors[1], beamColors[2], beamColors[3], beamColors[0]
-        )
-        ringPaint.shader = SweepGradient(cx, cy, colors, null)
+        var shader = sweepShader
+        if (shader == null || lastSweepIntensity != intensity) {
+            shader = SweepGradient(
+                cx, cy,
+                intArrayOf(
+                    beamColors[0], beamColors[1], beamColors[2],
+                    beamColors[3], beamColors[4], beamColors[0]
+                ),
+                null
+            )
+            sweepShader = shader
+            lastSweepIntensity = intensity
+        }
         sweepMatrix.setRotate(ringPhase * 360f, cx, cy)
-        ringPaint.shader?.setLocalMatrix(sweepMatrix)
+        shader.setLocalMatrix(sweepMatrix)
+        ringPaint.shader = shader
 
-        val breathe = 0.72f + 0.28f * breath
-        // 两层：先宽一圈做柔光底，再窄一圈做清晰色带。
-        // 大面板（288dp 控制岛）周长长，单层 1.6dp 会被稀释到看不见。
-        ringPaint.strokeWidth = borderWidthPx * 3.2f
-        ringPaint.alpha = (105 * intensity * breathe).toInt().coerceIn(0, 255)
+        val breathe = 0.72f + 0.28f * breath + 0.25f * burst
+        // 两层：先宽一圈做柔光散射，再窄一圈做清晰光谱细带。
+        ringPaint.strokeWidth = borderWidthPx * 3.4f
+        ringPaint.alpha = (95 * intensity * breathe).toInt().coerceIn(0, 255)
         canvas.drawPath(path, ringPaint)
 
-        ringPaint.strokeWidth = borderWidthPx
-        ringPaint.alpha = (240 * intensity * breathe).toInt().coerceIn(0, 255)
+        ringPaint.strokeWidth = borderWidthPx * (1f + 0.2f * burst)
+        ringPaint.alpha = (235 * intensity * breathe).toInt().coerceIn(0, 255)
         canvas.drawPath(path, ringPaint)
 
         ringPaint.shader = null
@@ -228,26 +308,19 @@ class BorderBeamDrawable @JvmOverloads constructor(
 
     /**
      * 彗尾：沿路径从尾到头等距铺贴软光斑。
-     *
-     * 每个光斑的透明度按 `t^2.4` 增长（能量压在头部），尺寸按 `t` 线性增长，
-     * 相邻光斑重叠后形成连续衰减——比分段 stroke 少了段落突变，也自然带出
-     * 类似运动模糊的拖影。
      */
-    private fun drawBeam(canvas: Canvas) {
-        // 呼吸调制拖尾长度：张的时候尾巴更长更舒展
-        val tailLen = pathLength * tailRatio * (0.86f + 0.28f * breath)
+    private fun drawBeam(canvas: Canvas, burst: Float) {
+        val tailLen = pathLength * tailRatio * (0.86f + 0.28f * breath + 0.25f * burst)
         val head = phase * pathLength
-        val baseSize = borderWidthPx * 4.2f * (0.92f + 0.16f * breath)
+        val baseSize = borderWidthPx * 4.0f * (0.92f + 0.16f * breath + 0.22f * burst)
 
         for (i in 0..stamps) {
             val t = i / stamps.toFloat()
-            // 沿周长往回取位置：t=0 是尾端，t=1 是头部
             val dist = normalize(head - tailLen * (1f - t))
             if (!measure.getPosTan(dist, posTan, null)) continue
 
-            // 亮度：尾部几乎透明，头部最亮；指数 2.5 让能量更集中在头
             val energy = t * t * sqrt(t)
-            val alpha = (255f * energy * intensity).toInt().coerceIn(0, 255)
+            val alpha = (255f * energy * intensity * (1f + 0.2f * burst)).toInt().coerceIn(0, 255)
             if (alpha <= 2) continue
 
             val size = baseSize * (0.28f + 0.72f * t)
@@ -259,20 +332,30 @@ class BorderBeamDrawable @JvmOverloads constructor(
             canvas.drawBitmap(dotBitmap, null, stampRect, dotPaint)
         }
 
-        // 头部光核：小半径径向光晕，让「核」有实体感；半径随呼吸轻微胀缩
+        // 头部光核：单位半径径向渐变复用 LocalMatrix 缩放平移，零逐帧分配
         val headDist = normalize(head)
         if (measure.getPosTan(headDist, posTan, null)) {
-            val glowR = borderWidthPx * 3.6f * (0.88f + 0.24f * breath)
-            headPaint.shader = RadialGradient(
-                posTan[0], posTan[1], glowR,
-                intArrayOf(
-                    withAlpha(Color.WHITE, 0.95f * intensity),
-                    withAlpha(beamColors[1], 0.5f * intensity),
-                    Color.TRANSPARENT
-                ),
-                floatArrayOf(0f, 0.42f, 1f),
-                Shader.TileMode.CLAMP
-            )
+            val glowR = borderWidthPx * 3.8f * (0.88f + 0.24f * breath + 0.35f * burst)
+            var hShader = headShader
+            if (hShader == null || lastHeadIntensity != intensity) {
+                hShader = RadialGradient(
+                    0f, 0f, 1f,
+                    intArrayOf(
+                        withAlpha(Color.WHITE, 0.96f * intensity),
+                        withAlpha(beamColors[0], 0.55f * intensity),
+                        withAlpha(beamColors[1], 0.28f * intensity),
+                        Color.TRANSPARENT
+                    ),
+                    floatArrayOf(0f, 0.34f, 0.65f, 1f),
+                    Shader.TileMode.CLAMP
+                )
+                headShader = hShader
+                lastHeadIntensity = intensity
+            }
+            headMatrix.setScale(glowR, glowR)
+            headMatrix.postTranslate(posTan[0], posTan[1])
+            hShader.setLocalMatrix(headMatrix)
+            headPaint.shader = hShader
             canvas.drawCircle(posTan[0], posTan[1], glowR, headPaint)
             headPaint.shader = null
         }

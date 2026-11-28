@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [RunRouteEntity::class, RunScheduleEntity::class, RunRecordEntity::class],
-    version = 3,
+    version = 5,
     // schema JSON 随构建导出到 app/schemas/ 并入库：迁移正确性可被
     // MigrationTestHelper 逐版本校验，避免升级用户数据库打不开
     exportSchema = true
@@ -43,13 +43,45 @@ abstract class GoRunDatabase : RoomDatabase() {
             }
         }
 
+        /** v3 -> v4：为高频排序与过滤列补充索引 */
+        internal val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_run_routes_createdAt` ON `run_routes` (`createdAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_run_schedules_routeId` ON `run_schedules` (`routeId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_run_schedules_isScheduleEnabled` ON `run_schedules` (`isScheduleEnabled`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_run_records_status_startedAt` ON `run_records` (`status`, `startedAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_run_records_startedAt` ON `run_records` (`startedAt`)")
+            }
+        }
+
+        /**
+         * v4 -> v5：一次性收口后续各期所需的字段，后续 Phase 不再零碎升库。
+         * 全部带默认值 / 可空，保证旧路线、旧定时、旧跑次 100% 可读。
+         */
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 路线：置顶 / 分类标签 / 可选海拔剖面
+                db.execSQL("ALTER TABLE run_routes ADD COLUMN isPinned INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE run_routes ADD COLUMN tag TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE run_routes ADD COLUMN elevationProfileJson TEXT")
+                // 定时：跳过单日 / 配速策略
+                db.execSQL("ALTER TABLE run_schedules ADD COLUMN skipDateIso TEXT")
+                db.execSQL("ALTER TABLE run_schedules ADD COLUMN paceStrategy TEXT NOT NULL DEFAULT 'STEADY'")
+                // 跑次：真实分段 / 配速策略 / 累计爬升
+                db.execSQL("ALTER TABLE run_records ADD COLUMN splitsJson TEXT")
+                db.execSQL("ALTER TABLE run_records ADD COLUMN paceStrategy TEXT NOT NULL DEFAULT 'STEADY'")
+                db.execSQL("ALTER TABLE run_records ADD COLUMN elevationGainMeters REAL NOT NULL DEFAULT 0.0")
+            }
+        }
+
         fun get(context: Context): GoRunDatabase =
             instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     GoRunDatabase::class.java,
                     "go_run.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build().also { instance = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .build().also { instance = it }
             }
     }
 }

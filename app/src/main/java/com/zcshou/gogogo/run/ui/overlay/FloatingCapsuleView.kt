@@ -2,7 +2,11 @@ package com.zcshou.gogogo.run.ui.overlay
 
 import android.animation.ObjectAnimator
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.hardware.Sensor
+import android.hardware.SensorManager
+import android.os.Build
 import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.LayoutInflater
@@ -16,15 +20,20 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.annotation.Keep
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
 import com.zcshou.gogogo.R
+import com.zcshou.gogogo.run.data.prefs.DisplayPrefs
 import com.zcshou.gogogo.run.data.prefs.RoamSpeeds
 import com.zcshou.gogogo.run.engine.RunPhase
 import com.zcshou.gogogo.run.engine.FreeRoamController
 import com.zcshou.gogogo.run.engine.RunRuntimeState
+import com.zcshou.gogogo.run.ui.glass.OverlayGlassStyle
 import com.zcshou.gogogo.run.ui.home.RunHost
 import java.util.Locale
 import kotlin.math.hypot
+import kotlin.math.roundToInt
 
 /**
  * 统一悬浮窗：收起态巡航胶囊；展开态自动跑圈控制岛 / 紧凑战术摇杆盘。
@@ -59,6 +68,10 @@ class FloatingCapsuleView @JvmOverloads constructor(
     private val hubDragBar: TextView
     private val joystick: TacticalJoystickView
     private val roamLockButton: ImageView
+    private val telemetryText: TextView
+    private val stepDot: View
+    private var stepPulseWarn = false
+    private var lastTelemetryText: String? = null
 
     /** 拖拽回调：(位移 dx, 位移 dy, 是否松手) */
     var dragHandler: ((Int, Int, Boolean) -> Unit)? = null
@@ -96,10 +109,11 @@ class FloatingCapsuleView @JvmOverloads constructor(
     private val capsuleBeamDrawable by lazy {
         BorderBeamDrawable(
             context,
-            cornerRadiusPx = 22f * resources.displayMetrics.density,
+            cornerRadiusPx = 20f * resources.displayMetrics.density,
             borderWidthPx = 1.6f * resources.displayMetrics.density
         )
     }
+    private var lastPausedLook: Boolean? = null
 
     /** 彗尾绕行一周耗时（ms）。太慢看不出流动，太快像故障灯。 */
     private var beamLapMs = 3200L
@@ -115,12 +129,26 @@ class FloatingCapsuleView @JvmOverloads constructor(
      * 20fps 下的跳步非常显眼。这套绘制的实际成本是每帧 26 次 drawBitmap，
      * 远低于一次普通布局，没必要为它牺牲流畅度。
      */
-    private var beamMinFrameMs = 0L
+    private var beamMinFrameMs = 33L
     private var beamRunning = false
     private var beamPaused = false
     private var beamScheduled = false
     private var beamStartAtMs = 0L
     private var beamLastFrameMs = 0L
+    private var ghostHidden = false
+    private val balancedRender = DisplayPrefs.quality(context) == DisplayPrefs.RenderQuality.BALANCED
+
+    /** 计步脉搏点是否可用：有传感器且已授予活动识别权限（与 StepGuard 启动条件一致） */
+    private val stepSensorAvailable: Boolean by lazy {
+        val hasSensor = (context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager)
+            ?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null
+        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.ACTIVITY_RECOGNITION
+            ) == PackageManager.PERMISSION_GRANTED
+        hasSensor && granted
+    }
 
     /**
      * 呼吸：三条互质周期的正弦叠加（3.1s / 4.7s / 2.3s）。
@@ -152,32 +180,37 @@ class FloatingCapsuleView @JvmOverloads constructor(
                 val phase = (elapsed % beamLapMs) / beamLapMs.toFloat()
                 val ringPhase = (elapsed % ringLapMs) / ringLapMs.toFloat()
                 val breath = breathAt(elapsed)
-                // 同屏三块面板共用同一相位与呼吸，读起来是同一束光在各自边缘走
-                panels().forEach { panel ->
-                    panel.beam?.let { beam ->
-                        beam.phase = phase
-                        beam.ringPhase = ringPhase
-                        beam.breath = breath
-                    }
-                    panel.invalidate()
+                // 同屏三块面板共用同一相位与呼吸，避免逐帧分配 List
+                updateBeamPanel(capsuleShell, phase, ringPhase, breath)
+                updateBeamPanel(actions, phase, ringPhase, breath)
+                updateBeamPanel(roamPanel, phase, ringPhase, breath)
+                // 计步告警才让脉搏点闪烁：正常时恒亮，省电冻结时随回调一起停
+                if (stepPulseWarn && stepDot.visibility == VISIBLE) {
+                    stepDot.alpha = 0.3f + 0.7f * breath
                 }
             }
             scheduleBeamFrame()
         }
     }
 
-    /** 当前挂载了流光的面板（只取可见的，隐藏的不浪费重绘）。 */
-    private fun panels(): List<CapsuleShellView> =
-        listOf(capsuleShell, actions, roamPanel).filter { it.visibility == VISIBLE }
+    private fun updateBeamPanel(panel: CapsuleShellView, phase: Float, ringPhase: Float, breath: Float) {
+        if (panel.visibility != VISIBLE) return
+        panel.beam?.let { beam ->
+            beam.phase = phase
+            beam.ringPhase = ringPhase
+            beam.breath = breath
+        }
+        panel.invalidate()
+    }
 
     private fun scheduleBeamFrame() {
-        if (beamScheduled || !beamRunning || beamPaused) return
+        if (balancedRender || ghostHidden || beamScheduled || !beamRunning || beamPaused) return
         beamScheduled = true
         android.view.Choreographer.getInstance().postFrameCallback(beamFrameCallback)
     }
 
     private fun startBeam() {
-        if (beamRunning) return
+        if (balancedRender || beamRunning) return
         beamRunning = true
         beamStartAtMs = 0L
         beamLastFrameMs = 0L
@@ -192,6 +225,8 @@ class FloatingCapsuleView @JvmOverloads constructor(
 
     init {
         orientation = VERTICAL
+        clipChildren = false
+        clipToPadding = false
         LayoutInflater.from(context).inflate(R.layout.floating_capsule, this, true)
         capsuleShell = findViewById(R.id.capsuleShell)
         capsuleShell.beam = capsuleBeamDrawable
@@ -210,12 +245,15 @@ class FloatingCapsuleView @JvmOverloads constructor(
         hubDragBar = findViewById(R.id.hubDragBar)
         joystick = findViewById(R.id.hubJoystick)
         roamLockButton = findViewById(R.id.btnRoamLock)
+        telemetryText = findViewById(R.id.capsuleTelemetryText)
+        stepDot = findViewById(R.id.capsuleStepDot)
 
         attachWindowDrag(capsuleBar)
         attachWindowDrag(hubHeader)
         attachWindowDrag(hubDragBar)
 
         capsuleBar.setOnClickListener {
+            capsuleShell.beam?.triggerBurst()
             if (inRoamMode) {
                 if (roamPanel.visibility == VISIBLE) collapseRoam() else expandRoam()
             } else {
@@ -226,36 +264,57 @@ class FloatingCapsuleView @JvmOverloads constructor(
             ghostHide()
             true
         }
-        findViewById<View>(R.id.btnHubCollapse).setOnClickListener { collapseActions() }
-        findViewById<View>(R.id.btnRoamCollapse).setOnClickListener { collapseRoam() }
+        val hubCollapseBtn = findViewById<View>(R.id.btnHubCollapse)
+        val roamCollapseBtn = findViewById<View>(R.id.btnRoamCollapse)
+        val paceMinusBtn = findViewById<View>(R.id.btnPaceMinus)
+        val pacePlusBtn = findViewById<View>(R.id.btnPacePlus)
+        val distMinusBtn = findViewById<View>(R.id.btnDistMinus)
+        val distPlusBtn = findViewById<View>(R.id.btnDistPlus)
+        val detourBtn = findViewById<TextView>(R.id.btnCapsuleDetour)
+        val manualBtn = findViewById<TextView>(R.id.btnCapsuleManual)
+        val returnBtn = findViewById<TextView>(R.id.btnCapsuleReturn)
+        val stopSimBtn = findViewById<TextView>(R.id.btnHubStopSim)
+        val stopRoamBtn = findViewById<TextView>(R.id.btnHubStopSimRoam)
+
+        hubCollapseBtn.setOnClickListener { collapseActions() }
+        roamCollapseBtn.setOnClickListener { collapseRoam() }
         roamLockButton.setOnClickListener {
+            roamPanel.beam?.triggerBurst()
             joystick.toggleLockFromButton()
             updateLockChip()
         }
         pauseButton.setOnClickListener {
+            actions.beam?.triggerBurst()
             host?.pauseResume()
             scheduleIdleDim()
         }
-        findViewById<View>(R.id.btnPaceMinus).setOnClickListener { nudgePace(-10) }
-        findViewById<View>(R.id.btnPacePlus).setOnClickListener { nudgePace(10) }
-        findViewById<View>(R.id.btnDistMinus).setOnClickListener { nudgeTargetKm(-0.5f) }
-        findViewById<View>(R.id.btnDistPlus).setOnClickListener { nudgeTargetKm(0.5f) }
-        findViewById<TextView>(R.id.btnCapsuleDetour).setOnClickListener {
+        paceMinusBtn.setOnClickListener { nudgePace(-10) }
+        pacePlusBtn.setOnClickListener { nudgePace(10) }
+        distMinusBtn.setOnClickListener { nudgeTargetKm(-0.5f) }
+        distPlusBtn.setOnClickListener { nudgeTargetKm(0.5f) }
+        detourBtn.setOnClickListener {
+            actions.beam?.triggerBurst()
             host?.pickDetour()
             scheduleIdleDim()
         }
         finishButton.setOnClickListener {
+            actions.beam?.triggerBurst()
             host?.finishEarly()
             scheduleIdleDim()
         }
-        findViewById<TextView>(R.id.btnCapsuleManual).setOnClickListener {
+        manualBtn.setOnClickListener {
             beginManualTakeover()
         }
-        findViewById<TextView>(R.id.btnCapsuleReturn).setOnClickListener {
+        returnBtn.setOnClickListener {
             endManualTakeover()
         }
-        findViewById<TextView>(R.id.btnHubStopSim).setOnClickListener { confirmStopSimulation() }
-        findViewById<TextView>(R.id.btnHubStopSimRoam).setOnClickListener { confirmStopSimulation() }
+        stopSimBtn.setOnClickListener { confirmStopSimulation() }
+        stopRoamBtn.setOnClickListener { confirmStopSimulation() }
+        OverlayGlassStyle.attachTactilePress(
+            hubCollapseBtn, roamCollapseBtn, roamLockButton,
+            pauseButton, paceMinusBtn, pacePlusBtn, distMinusBtn, distPlusBtn,
+            detourBtn, finishButton, manualBtn, returnBtn, stopSimBtn, stopRoamBtn
+        )
         setupHubGear()
         gearSpeed = RoamSpeeds.speed(context, selectedGear)
         joystick.listener = object : TacticalJoystickView.Listener {
@@ -286,13 +345,12 @@ class FloatingCapsuleView @JvmOverloads constructor(
     /**
      * 展开态控制岛 / 手动接管摇杆盘也换成棱镜玻璃。
      * 与胶囊同一套材质，只是圆角更大（24dp）——悬浮窗里没有下层像素可折射，
-     * 三块面板必须共用同一套「薄膜 + 高光 + 细边」才读得出是同一块玻璃。
+     * 三块面板必须共用同一套「薄膜 + 高光 + 双层微光细边」才读得出是同一块玻璃。
      */
     private fun applyPanelBackgrounds() {
         val density = resources.displayMetrics.density
-        // 展开态控制岛 / 摇杆盘与胶囊共用同一套材质：磨砂底 + 边缘流光
         listOf(actions, roamPanel).forEach { panel ->
-            panel.background = PrismGlassDrawable(context, 24f * density)
+            PrismGlassDrawable.attach(panel, 24f)
             panel.beam = BorderBeamDrawable(
                 context,
                 cornerRadiusPx = 24f * density,
@@ -379,9 +437,11 @@ class FloatingCapsuleView @JvmOverloads constructor(
             }
         }
         chips.forEach { chip ->
+            OverlayGlassStyle.attachTactilePress(chip.view)
             chip.view.setOnClickListener {
                 selectedGear = chip.gear
                 gearSpeed = RoamSpeeds.speed(context, chip.gear)
+                roamPanel.beam?.triggerBurst()
                 if (inRoamMode) capsuleText.text = "手动接管 · ${chip.gear.label}"
                 paint()
             }
@@ -463,18 +523,55 @@ class FloatingCapsuleView @JvmOverloads constructor(
 
     private fun applyCapsuleBackground() {
         // 悬浮窗拿不到下层 App 的像素（FLAG_BLUR_BEHIND 会生成全屏 Dim Layer 吞掉窗外触摸），
-        // 玻璃厚度只能靠材质本身：顶部镜面高光 + 底部内阴影 + 冷银细边。
+        // 玻璃厚度只能靠材质本身：双层微光描边 + 顶部镜面高光 + 底部微阴影。
         // 跨窗模糊可用时用半透版本，不可用时换成更实的兜底，避免文字压在壁纸上。
         val look = stepsWarningState to blurFallbackOn
         if (capsuleLook == look) return
         capsuleLook = look
-        val density = resources.displayMetrics.density
-        // 背景挂在外壳上（不是 capsuleBar）：流光覆盖层是它的兄弟，需要同一块圆角区域
+        val radiusPx = 20f * resources.displayMetrics.density
+        capsuleShell.setOutlineCornerRadius(radiusPx)
         capsuleShell.background = PrismGlassDrawable(
             context,
-            22f * density,
+            radiusPx,
             warn = stepsWarningState
-        ).also { it.alpha = if (blurFallbackOn) 255 else 236 }
+        ).also { it.alpha = if (blurFallbackOn) 255 else 240 }
+    }
+
+    /**
+     * 展开态遥测行：运动线索 · 海拔 · 精度 · 计步脉搏点。
+     *
+     * 计步传感器缺失或未授予 ACTIVITY_RECOGNITION 时只显示海拔与线索 ——
+     * 这种情况下 StepGuard 本身就不会启动，画一个永远告警的脉冲点纯属误导。
+     */
+    private fun updateTelemetry(state: RunRuntimeState) {
+        val cue = state.motionCue
+        val altitude = state.altitudeMeters.roundToInt()
+        val accuracy = state.accuracyMeters.roundToInt()
+        val text = buildString(24) {
+            if (!cue.isNullOrEmpty()) {
+                append(cue).append(" · ")
+            }
+            append("海拔 ").append(altitude).append("m · ±").append(accuracy).append("m")
+        }
+        if (text != lastTelemetryText) {
+            lastTelemetryText = text
+            telemetryText.text = text
+        }
+        if (!stepSensorAvailable) {
+            stepDot.visibility = View.GONE
+            stepPulseWarn = false
+            return
+        }
+        stepDot.visibility = View.VISIBLE
+        if (stepPulseWarn != state.stepsWarning) {
+            stepPulseWarn = state.stepsWarning
+            stepDot.backgroundTintList = ColorStateList.valueOf(
+                context.getColor(
+                    if (state.stepsWarning) R.color.dr_overlay_danger else R.color.dr_overlay_ok
+                )
+            )
+            if (!state.stepsWarning) stepDot.alpha = 1f
+        }
     }
 
     fun update(state: RunRuntimeState) {
@@ -483,6 +580,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
         } else {
             "--"
         }
+        updateTelemetry(state)
         if (!inRoamMode) {
             stepsWarningState = state.stepsWarning
             applyCapsuleBackground()
@@ -527,7 +625,17 @@ class FloatingCapsuleView @JvmOverloads constructor(
         lastAccumulatedKm = state.accumulatedKm.toFloat()
         paceText.text = formatPace(lastTargetPace)
         lapText.text = String.format(Locale.US, "%.1fkm", lastTargetKm)
-        pauseButton.text = if (state.phase == RunPhase.PAUSED) "继续" else "暂停"
+        val isPaused = state.phase == RunPhase.PAUSED
+        pauseButton.text = if (isPaused) "继续" else "暂停"
+        if (lastPausedLook != isPaused) {
+            lastPausedLook = isPaused
+            pauseButton.setBackgroundResource(
+                if (isPaused) R.drawable.bg_overlay_pill_tonal else R.drawable.bg_overlay_recess
+            )
+            pauseButton.setTextColor(
+                context.getColor(if (isPaused) R.color.dr_overlay_ice else R.color.dr_overlay_text_primary)
+            )
+        }
         finishButton.isEnabled = state.phase == RunPhase.RUNNING || state.phase == RunPhase.DETOUR_POINT
     }
 
@@ -539,6 +647,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
         lastTargetPace = next
         lastAdjustAtMs = SystemClock.elapsedRealtime()
         paceText.text = formatPace(next)
+        actions.beam?.triggerBurst()
         host?.adjustPace(next)
         scheduleIdleDim()
     }
@@ -552,6 +661,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
         lastTargetKm = next
         lastAdjustAtMs = SystemClock.elapsedRealtime()
         lapText.text = String.format(Locale.US, "%.1fkm", next)
+        actions.beam?.triggerBurst()
         host?.adjustTargetKm(next)
         scheduleIdleDim()
     }
@@ -577,6 +687,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
         actions.alpha = 0f
         actions.scaleX = 0.94f
         actions.scaleY = 0.94f
+        actions.beam?.triggerBurst()
         actions.animate()
             .alpha(1f)
             .scaleX(1f)
@@ -599,7 +710,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
             .setDuration(140)
             .withEndAction {
                 actions.visibility = GONE
-                // 点击 ✕ 收起后弹性变形回迷你药丸
+                // 点击收起后弹性变形回迷你药丸
                 showMiniPill(animate = true)
                 post { host?.relayoutOverlay() }
             }
@@ -728,11 +839,14 @@ class FloatingCapsuleView @JvmOverloads constructor(
     // ---------------- 手动接管 / 结束模拟 ----------------
 
     private fun beginManualTakeover() {
-        val running = host?.currentState()?.phase
+        val currentState = host?.currentState()
+        val running = currentState?.phase
         if (running == RunPhase.RUNNING || running == RunPhase.DETOUR_POINT) {
             host?.pauseResume()
         }
         host?.beginManualOverride()
+        // 先用当前跑道位置预置漫游起点，防止首次连接时瞬移到真实定位/北京
+        FreeRoamController.seedPosition(currentState?.position)
         FreeRoamController.attach(context)
         inRoamMode = true
         expanded = false
@@ -762,6 +876,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
             FreeRoamController.teleport(target.lat, target.lng)
             takeoverRunnable?.let { removeCallbacks(it) }
             val takeover = Runnable {
+                FreeRoamController.detachKeepProviders()
                 host?.endManualOverride()
                 if (host?.currentState()?.phase == RunPhase.PAUSED) {
                     host.pauseResume()
@@ -770,6 +885,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
             takeoverRunnable = takeover
             postDelayed(takeover, 900)
         } else {
+            FreeRoamController.detachKeepProviders()
             host?.endManualOverride()
             if (host?.currentState()?.phase == RunPhase.PAUSED) {
                 host.pauseResume()
@@ -808,9 +924,13 @@ class FloatingCapsuleView @JvmOverloads constructor(
 
     private fun ghostHide() {
         ghostRunnable?.let { removeCallbacks(it) }
+        ghostHidden = true
+        pauseAnimationLoops()
         animate().alpha(0f).setDuration(150).start()
         val runnable = Runnable {
+            ghostHidden = false
             animate().alpha(FULL_ALPHA).setDuration(200).start()
+            resumeAnimationLoops()
             scheduleIdleDim()
         }
         ghostRunnable = runnable
@@ -818,6 +938,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
     }
 
     private fun startPulse() {
+        if (balancedRender || beamPaused || ghostHidden) return
         pulseAnimator?.cancel()
         val animator = ObjectAnimator.ofInt(this, "pulseAlpha", 255, 70)
         animator.duration = 1100
@@ -828,6 +949,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
         animator.start()
     }
 
+    @Keep
     fun setPulseAlpha(alpha: Int) = ring.setPulseAlpha(alpha)
 
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
@@ -848,6 +970,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         pulseAnimator?.cancel()
+        pulseAnimator = null
         stopBeam()
         idleRunnable?.let { removeCallbacks(it) }
         ghostRunnable?.let { removeCallbacks(it) }
@@ -855,6 +978,10 @@ class FloatingCapsuleView @JvmOverloads constructor(
         // 窗口移除后回调若仍触发 host?.endManualOverride()，会在空窗口上误操作
         takeoverRunnable?.let { removeCallbacks(it) }
         takeoverRunnable = null
+        if (inRoamMode) {
+            FreeRoamController.detachKeepProviders()
+            inRoamMode = false
+        }
         morphAnimator?.cancel()
         morphAnimator = null
         super.onDetachedFromWindow()
@@ -868,12 +995,28 @@ class FloatingCapsuleView @JvmOverloads constructor(
         if (beamPaused == paused) return
         beamPaused = paused
         if (paused) {
-            beamScheduled = false
-            android.view.Choreographer.getInstance().removeFrameCallback(beamFrameCallback)
+            pauseAnimationLoops()
         } else {
-            beamStartAtMs = 0L
-            beamLastFrameMs = 0L
-            scheduleBeamFrame()
+            resumeAnimationLoops()
+        }
+    }
+
+    private fun pauseAnimationLoops() {
+        beamScheduled = false
+        android.view.Choreographer.getInstance().removeFrameCallback(beamFrameCallback)
+        pulseAnimator?.pause()
+    }
+
+    private fun resumeAnimationLoops() {
+        if (balancedRender || beamPaused || ghostHidden || !isAttachedToWindow) return
+        beamStartAtMs = 0L
+        beamLastFrameMs = 0L
+        scheduleBeamFrame()
+        val pulse = pulseAnimator
+        if (pulse != null && pulse.isPaused) {
+            pulse.resume()
+        } else if (pulse == null) {
+            startPulse()
         }
     }
 }

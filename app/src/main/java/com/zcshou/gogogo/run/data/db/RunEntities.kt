@@ -1,12 +1,16 @@
 package com.zcshou.gogogo.run.data.db
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
  * 1. 跑圈路线模板表（一次创建，永久复用；内部全部存储 WGS-84 坐标）
  */
-@Entity(tableName = "run_routes")
+@Entity(
+    tableName = "run_routes",
+    indices = [Index(value = ["createdAt"])]
+)
 data class RunRouteEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,                      // 路线名称，如 "南操场 400m 标准圈"
@@ -21,13 +25,26 @@ data class RunRouteEntity(
     val lastTargetDistanceKm: Float = 3.0f,
     val lastTargetPaceSecPerKm: Int = 340,
     val lastSmartJitterEnabled: Boolean = true,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    // --- v5：工作台组织字段 ---
+    /** 置顶：首页路线切换条与列表把置顶路线永远排在最前 */
+    val isPinned: Boolean = false,
+    /** 分类标签（如「操场」「公园」「校园」「测试」），空串表示未分类 */
+    val tag: String = "",
+    /**
+     * 可选海拔剖面：GPX `<ele>` 或按微地形估算的真实海拔序列 JSON，
+     * 如 `[50.2, 51.0, ...]`；旧路线为 null 时预览页回退到曲率/微地形估算
+     */
+    val elevationProfileJson: String? = null
 )
 
 /**
  * 2. 跑步任务预设与定时调度表
  */
-@Entity(tableName = "run_schedules")
+@Entity(
+    tableName = "run_schedules",
+    indices = [Index(value = ["routeId"]), Index(value = ["isScheduleEnabled"])]
+)
 data class RunScheduleEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val routeId: Long,                     // 关联的路线 ID
@@ -41,15 +58,23 @@ data class RunScheduleEntity(
     val isScheduleEnabled: Boolean = false,
     val windowStartMinutes: Int = 1110,    // 启动窗口起点（当日分钟数，如 18:30 = 1110）
     val windowJitterMinutes: Int = 8,      // 随机延迟窗口（分钟，防每天分秒不差）
-    val repeatDaysMask: Int = 0b0111110,   // 周一至周日位掩码
+    val repeatDaysMask: Int = 0b0011111,   // 周一至周日位掩码（bit0=周一 … bit4=周五）
     val autoIsolateWifi: Boolean = true,   // 开跑前是否触发 Wi-Fi 隔离（Shizuku 静音断网或弹窗提醒）
-    val linkedTargetAppPkg: String? = null // 关联目标跑步 App 包名（通知点击一键拉起）
+    val linkedTargetAppPkg: String? = null, // 关联目标跑步 App 包名（通知点击一键拉起）
+    // --- v5：跳过单日与配速策略 ---
+    /** 跳过该日一次触发（ISO 本地日期串，如 `2026-11-28`）；触发后由 Receiver 自动清空 */
+    val skipDateIso: String? = null,
+    /** 定时自动开跑使用的配速策略（PaceStrategy.name） */
+    val paceStrategy: String = "STEADY"
 )
 
 /**
  * 3. 跑步执行历史表
  */
-@Entity(tableName = "run_records")
+@Entity(
+    tableName = "run_records",
+    indices = [Index(value = ["status", "startedAt"]), Index(value = ["startedAt"])]
+)
 data class RunRecordEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val routeId: Long = 0,
@@ -58,7 +83,17 @@ data class RunRecordEntity(
     val durationSeconds: Int,
     val averagePaceSec: Int,
     val startedAt: Long,
-    val status: String                     // "COMPLETED" | "ABORTED"
+    val status: String,                    // "COMPLETED" | "ABORTED"
+    // --- v5：真实分段 / 策略 / 爬升 ---
+    /**
+     * 真实分段 JSON：`[{"idx":1,"distM":1000,"durSec":338,"paceSec":338,"phase":"STEADY"}]`，
+     * 旧记录为 null（战报复盘回退到历史估算并显式标注）
+     */
+    val splitsJson: String? = null,
+    /** 本次使用的配速策略（PaceStrategy.name） */
+    val paceStrategy: String = "STEADY",
+    /** 累计正海拔爬升（米） */
+    val elevationGainMeters: Double = 0.0
 )
 
 /**

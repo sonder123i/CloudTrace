@@ -2,6 +2,7 @@ package com.zcshou.gogogo.run.ui.glass
 
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.LinearGradient
@@ -18,19 +19,31 @@ import android.view.ViewOutlineProvider
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
+import androidx.core.graphics.ColorUtils
+import com.elvishew.xlog.XLog
 import com.zcshou.gogogo.R
 
 /**
- * V5.0 Z 轴四层光学材质容器（零采样、零逐帧模糊）。
+ * V6.4 Z 轴四层光学材质容器（静态画布共享折射 + 零逐帧截屏）。
  *
  * - L1 [lgMatte]：92% 高密度哑光陶瓷 + 0.5dp 极细内描边，用于次级信息容器；
- * - L2 [lgPrism]：对角线微光泽 + 1.5dp 棱镜虹彩描边 + 顶部 1dp 天光亮边，
- *   配合 8dp 大半径低透明度弥散阴影，用于核心焦点卡；
- * - L3 [lgLens]：90%~93% 高透悬浮透镜，用于导航胶囊/弹窗底板，防文字穿透；
+ * - L2 [lgPrism]：AGSL 透镜（API 33+ / 光学档）或对角线微光泽 + 棱镜虹彩描边；
+ * - L3 [lgLens]：高透悬浮透镜，用于导航胶囊/弹窗底板，防文字穿透；
  * - 默认：V4 静态磨砂 + 顶部高光，兼容旧调用点。
  *
- * 性能铁律：不截取底层视图、不做 RenderEffect 实时模糊；绘制只在尺寸/主题变化时发生，
- * 滚动或巡航期间玻璃本身 0 重绘。
+ * ## V6.4 光学管线
+ *
+ * 当设备满足「API 33+ · 光学档 · 未省电 · 未巡航冻结」且视图树里存在
+ * [StaticBackdropProvider] 登记的静态画布时，本容器不再画纯色，而是走
+ * [ContainerOptics]：把**自身相对画布根容器的偏移**作为 Uniform 喂给预缓存的
+ * 静态画布纹理，单 Pass 完成圆角 SDF 折射 + 中心柔焦 + 边缘色散。
+ * 列表滚动 60~120fps 时不重新截屏任何内容。
+ *
+ * 不满足条件（低版本 / 省电平衡 / 系统省电 / 高对比度 / 无静态画布）时，
+ * 自动无缝退回零采样静态材质 —— 低端机零卡顿。
+ *
+ * 性能铁律：`draw()` 内不创建 Paint / Path / Shader / Rect / Matrix；
+ * 所有形状与渐变都在尺寸、圆角、主题变化时重建。
  */
 class LiquidGlassContainer @JvmOverloads constructor(
     context: Context,
@@ -44,7 +57,14 @@ class LiquidGlassContainer @JvmOverloads constructor(
     private val shapePath = Path()
     private val shapeRect = RectF()
 
+    /** 复用窗口坐标数组：`getLocationInWindow` 每次都会写满它，无需新建。 */
+    private val selfLocation = IntArray(2)
+    private val hostLocation = IntArray(2)
+
+    private val minOpticalSize = 24f * density
+
     private var cornerRadiusPx = 24f * density
+    private var bevelWidthPx = 8f * density
     private var interactive = true
     private var matte = false
     private var prism = false
@@ -59,6 +79,18 @@ class LiquidGlassContainer @JvmOverloads constructor(
     private var prismTop = 0
     private var prismBottom = 0
     private var lensSurface = 0
+    private var opticalSurface = 0
+    private var isNightTheme = false
+
+    // 尺寸相关 Shader 缓存：只在 onSizeChanged / 主题变化时重建
+    private var prismFillShader: Shader? = null
+    private var prismGlossShader: Shader? = null
+    private var frostedShadowShader: Shader? = null
+
+    // AGSL 透镜
+    private var optics: ContainerOptics? = null
+    private var opticsResolved = false
+    private var opticsBroken = false
 
     private var pressAnimator: ValueAnimator? = null
 
@@ -66,6 +98,9 @@ class LiquidGlassContainer @JvmOverloads constructor(
         val ta = context.obtainStyledAttributes(attrs, R.styleable.LiquidGlassContainer)
         cornerRadiusPx = ta.getDimension(
             R.styleable.LiquidGlassContainer_lgCornerRadius, 24f * density
+        )
+        bevelWidthPx = ta.getDimension(
+            R.styleable.LiquidGlassContainer_lgBevelWidth, 8f * density
         )
         interactive = ta.getBoolean(R.styleable.LiquidGlassContainer_lgInteractive, true)
         hasExplicitTint = ta.hasValue(R.styleable.LiquidGlassContainer_lgTint)
@@ -108,6 +143,8 @@ class LiquidGlassContainer @JvmOverloads constructor(
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        rebuildShape()
+        rebuildSizeShaders()
         invalidateOutline()
         invalidate()
     }
@@ -116,9 +153,11 @@ class LiquidGlassContainer @JvmOverloads constructor(
 
     fun onGlassEnvironmentChanged() {
         loadThemeColors()
+        rebuildSizeShaders()
         if (!hasExplicitTint) {
             tintColor = context.getColor(R.color.dr_glass_surface_tint)
         }
+        invalidateOutline()
         invalidate()
     }
 
@@ -132,7 +171,14 @@ class LiquidGlassContainer @JvmOverloads constructor(
 
     fun setGlassCornerRadius(px: Float) {
         cornerRadiusPx = px.coerceAtLeast(0f)
+        rebuildShape()
+        rebuildSizeShaders()
         invalidateOutline()
+        invalidate()
+    }
+
+    fun setGlassBevelWidth(px: Float) {
+        bevelWidthPx = px.coerceAtLeast(0f)
         invalidate()
     }
 
@@ -158,21 +204,119 @@ class LiquidGlassContainer @JvmOverloads constructor(
 
     override fun draw(canvas: Canvas) {
         if (width > 0 && height > 0) {
-            buildPath()
-            when {
-                matte -> drawMatteSurface(canvas)
-                prism -> drawPrismSurface(canvas)
-                lens -> drawLensSurface(canvas)
-                else -> drawFrostedSurface(canvas)
+            // 光学管线优先；任何一步不满足条件都退回静态材质
+            if (!drawOptical(canvas)) {
+                when {
+                    matte -> drawMatteSurface(canvas)
+                    prism -> drawPrismSurface(canvas)
+                    lens -> drawLensSurface(canvas)
+                    else -> drawFrostedSurface(canvas)
+                }
             }
         }
         super.draw(canvas)
     }
 
-    private fun buildPath() {
-        shapeRect.set(0f, 0f, width.toFloat(), height.toFloat())
+    /**
+     * 静态画布共享折射。只有「圆角矩形形状 + 相对画布偏移」两个变量进入着色器，
+     * 滚动时零截屏。返回 false 表示本帧不走光学管线。
+     *
+     * 三个层级都参与折射，但用染色不透明度与色散拉开 Z 轴：
+     * - [matte] 辅助条：92% 染色（更实、无色散），只保留边缘透镜；
+     * - [prism] 核心卡：80% 染色 + 棱镜微色散；
+     * - [lens] / 默认：80% 染色 + 极轻色散。
+     */
+    private fun drawOptical(canvas: Canvas): Boolean {
+        if (width < minOpticalSize || height < minOpticalSize) return false
+        if (opticsBroken) return false
+        if (!DeepRunGlassManager.isOpticalPipelineActive()) return false
+        val snapshot = StaticBackdropProvider.snapshotFor(this) ?: return false
+        val shader = resolveOptics() ?: return false
+
+        getLocationInWindow(selfLocation)
+        snapshot.host.getLocationInWindow(hostLocation)
+        val originX = (selfLocation[0] - hostLocation[0]).toFloat()
+        val originY = (selfLocation[1] - hostLocation[1]).toFloat()
+
+        val tint = when {
+            hasExplicitTint -> tintColor
+            // 辅助条保持"实体"读感：从旧版 92% 降到 88%，让背后画布的冷银光斑
+            // 透出一点点，同时文字对比度不打折 —— 这是 Z 轴景深的下层
+            matte -> ColorUtils.setAlphaComponent(matteSurface, 0xE2)
+            else -> opticalSurface
+        }
+        val dispersion = when {
+            prism -> 0.10f
+            matte -> 0f
+            else -> 0.035f
+        }
+
+        return try {
+            shader.draw(
+                canvas = canvas,
+                view = this,
+                snapshot = snapshot,
+                originX = originX,
+                originY = originY,
+                radius = safeRadius(),
+                tint = tint,
+                bevel = bevelWidthPx,
+                dispersion = dispersion,
+                night = isNightTheme
+            )
+        } catch (t: Throwable) {
+            // 任意 ROM 的 AGSL 兼容异常：永久回退静态材质，绝不反复抛
+            opticsBroken = true
+            XLog.w("GLASS: AGSL container optics disabled (${t.javaClass.simpleName}: ${t.message})")
+            false
+        }
+    }
+
+    private fun resolveOptics(): ContainerOptics? {
+        if (opticsResolved) return optics
+        opticsResolved = true
+        val created = ContainerOpticsFactory.create()
+        if (created == null) opticsBroken = true
+        optics = created
+        return created
+    }
+
+    private fun rebuildShape() {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) {
+            shapePath.reset()
+            return
+        }
+        shapeRect.set(0f, 0f, w, h)
         shapePath.reset()
         shapePath.addRoundRect(shapeRect, safeRadius(), safeRadius(), Path.Direction.CW)
+    }
+
+    /** 尺寸相关的两条渐变（L2 对角线受光 / 兼容层底部内阴影）。 */
+    private fun rebuildSizeShaders() {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (w <= 0f || h <= 0f) {
+            prismFillShader = null
+            prismGlossShader = null
+            frostedShadowShader = null
+            return
+        }
+        prismFillShader = LinearGradient(
+            0f, 0f, w, h,
+            prismTop, prismBottom, Shader.TileMode.CLAMP
+        )
+        prismGlossShader = LinearGradient(
+            0f, 0f, w * 0.62f, h * 0.5f,
+            intArrayOf(0x24FFFFFF, 0x00FFFFFF),
+            floatArrayOf(0f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        frostedShadowShader = LinearGradient(
+            0f, h * 0.75f, 0f, h,
+            0x00000000, rimShadowColor, Shader.TileMode.CLAMP
+        )
     }
 
     /** L1 · 哑光陶瓷：高密度磨砂 + 1.5dp 冷银白镜面切边。 */
@@ -201,20 +345,12 @@ class LiquidGlassContainer @JvmOverloads constructor(
             fillPaint.shader = null
             fillPaint.color = tintColor
         } else {
-            fillPaint.shader = LinearGradient(
-                0f, 0f, width.toFloat(), height.toFloat(),
-                prismTop, prismBottom, Shader.TileMode.CLAMP
-            )
+            fillPaint.shader = prismFillShader
         }
         canvas.drawPath(shapePath, fillPaint)
 
         // 曲面微光泽：左上角一小片对角线高光，模拟斜射光在微凸玻璃上的反射
-        fillPaint.shader = LinearGradient(
-            0f, 0f, width * 0.62f, height * 0.5f,
-            intArrayOf(0x24FFFFFF, 0x00FFFFFF),
-            floatArrayOf(0f, 1f),
-            Shader.TileMode.CLAMP
-        )
+        fillPaint.shader = prismGlossShader
         canvas.drawPath(shapePath, fillPaint)
         fillPaint.shader = null
 
@@ -231,7 +367,7 @@ class LiquidGlassContainer @JvmOverloads constructor(
         )
     }
 
-    /** L3 · 高透悬浮透镜：90%~93% 底色 + 上下 1dp 银白锐利高光。 */
+    /** L3 · 高透悬浮透镜：高透底色 + 上下 1dp 银白锐利高光。 */
     private fun drawLensSurface(canvas: Canvas) {
         fillPaint.shader = null
         fillPaint.style = Paint.Style.FILL
@@ -249,18 +385,12 @@ class LiquidGlassContainer @JvmOverloads constructor(
 
     /** 兼容层：V4 静态磨砂 + 顶部高光。 */
     private fun drawFrostedSurface(canvas: Canvas) {
-        val h = height.toFloat()
         fillPaint.shader = null
         fillPaint.style = Paint.Style.FILL
         fillPaint.color = tintColor
         canvas.drawPath(shapePath, fillPaint)
 
-        val shadowTop = h * 0.75f
-        fillPaint.shader = LinearGradient(
-            0f, shadowTop, 0f, h,
-            0x00000000, rimShadowColor,
-            Shader.TileMode.CLAMP
-        )
+        fillPaint.shader = frostedShadowShader
         fillPaint.alpha = 0x12
         canvas.drawPath(shapePath, fillPaint)
         fillPaint.shader = null
@@ -286,6 +416,10 @@ class LiquidGlassContainer @JvmOverloads constructor(
         prismTop = context.getColor(R.color.dr_l2_glass_top)
         prismBottom = context.getColor(R.color.dr_l2_glass_bottom)
         lensSurface = context.getColor(R.color.dr_l3_lens_surface)
+        opticalSurface = context.getColor(R.color.dr_l3_optical_surface)
+        isNightTheme =
+            (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
     }
 
     /** L2 弥散阴影：≤8% 透明度，大半径柔和，不产生硬边。 */

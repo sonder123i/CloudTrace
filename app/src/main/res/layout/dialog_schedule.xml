@@ -26,6 +26,100 @@
         android:textSize="14sp"
         android:thumbTint="@color/pf_on_primary" />
 
+    <!-- 重复星期多选：bit0=周一 … bit6=周日；swDaily 开启时整行灰置 -->
+    <TextView
+        android:id="@+id/tvDayHint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="重复星期（点选多天）"
+        android:textColor="@color/pf_text_secondary"
+        android:textSize="12sp" />
+
+    <LinearLayout
+        android:id="@+id/dayRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/day0"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginEnd="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="一"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/day1"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginEnd="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="二"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/day2"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginEnd="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="三"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/day3"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginEnd="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="四"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/day4"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginEnd="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="五"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/day5"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_marginEnd="5dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="六"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/day6"
+            android:layout_width="0dp"
+            android:layout_height="34dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="日"
+            android:textSize="13sp" />
+    </LinearLayout>
+
     <TimePicker
         android:id="@+id/timePicker"
         android:layout_width="wrap_content"

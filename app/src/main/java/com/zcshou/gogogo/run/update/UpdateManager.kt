@@ -83,7 +83,9 @@ class UpdateManager internal constructor(
 
         val progress: Int
             get() = manifest?.let {
-                (bytes * 100 / it.size).coerceIn(0, 100).toInt()
+                // 校验器目前会 floor size ≥ 1，这里再加一道除数防御：
+                // 未来清单 schema 放宽也不至于除零 ArithmeticException
+                (bytes * 100 / it.size.coerceAtLeast(1)).coerceIn(0, 100).toInt()
             } ?: 0
     }
 
@@ -180,7 +182,6 @@ class UpdateManager internal constructor(
                 if (!manual && now - prefs.getLong("last-check:$channel", 0L) < checkIntervalMs) {
                     return@withLock
                 }
-                prefs.edit().putLong("last-check:$channel", now).apply()
                 mutable.update {
                     it.copy(
                         check = Check.CHECKING,
@@ -235,6 +236,10 @@ class UpdateManager internal constructor(
                         } ?: false
                         val neverPublished = results.isEmpty() && previousManifest == null &&
                             sourceList.firstOrNull()?.let { outcomes[it] } == "MANIFEST_ABSENT"
+                        // 仅当真正收到服务端响应（含 304 / 清单未发布）时才记录自动检查时间戳，离线失败保留立即重试机会
+                        if (chosen != null || results.isNotEmpty() || neverPublished) {
+                            prefs.edit().putLong("last-check:$channel", now).apply()
+                        }
                         val firstFailure = sourceList.asSequence()
                             .mapNotNull { outcomes[it]?.takeIf(String::isNotEmpty) }
                             .firstOrNull()
@@ -501,7 +506,7 @@ class UpdateManager internal constructor(
                             partial.delete()
                             taskEtag = null
                         }
-                        if (finalCode == "DISK_FULL") break
+                        if (finalCode == "DISK_FULL" || finalCode == "DOWNLOAD_BUDGET") break
                         index++
                     }
                 }
@@ -618,7 +623,7 @@ class UpdateManager internal constructor(
                             // 只把读取授权交给系统安装器，避免第三方“安装器”应用从选择器抢走 APK
                             val installer = context.packageManager.resolveActivity(
                                 installIntent,
-                                PackageManager.MATCH_SYSTEM_ONLY
+                                PackageManager.MATCH_SYSTEM_ONLY or PackageManager.MATCH_DEFAULT_ONLY
                             )?.activityInfo?.packageName
                                 ?: updateError("INSTALL_FAILED", "未找到系统安装器")
                             installIntent.setPackage(installer)
@@ -665,15 +670,29 @@ class UpdateManager internal constructor(
 
     private suspend fun fetch(url: String): UpdateManifest {
         var target = url
+        val etagKey = "etag:$url"
+        val stored = cached()
         repeat(6) {
             if (!allowedUrl(target)) updateError("MANIFEST_URL", "更新地址不受支持")
-            val etagKey = "etag:$url"
-            val stored = cached()
             val builder = Request.Builder().url(target).header("Cache-Control", "no-cache")
-            if (stored != null) {
+            // 仅当当前缓存信封正是该 URL 上次 ETag 对应的信封时才附带 If-None-Match，避免主备双源互相踩出 304 失败
+            if (stored != null && prefs.getString("etag-payload:$url", null) == stored.envelope) {
                 prefs.getString(etagKey, null)?.let { builder.header("If-None-Match", it) }
             }
-            http.newCall(builder.build()).execute().use { response ->
+            val call = http.newCall(builder.build())
+            kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                cont.invokeOnCancellation { call.cancel() }
+                call.enqueue(object : okhttp3.Callback {
+                    override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                        if (cont.isActive) cont.resumeWith(Result.failure(e))
+                    }
+
+                    override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                        if (cont.isActive) cont.resumeWith(Result.success(response))
+                        else response.close()
+                    }
+                })
+            }.use { response ->
                 if (response.code in setOf(301, 302, 303, 307, 308)) {
                     target = response.header("Location")
                         ?.let { response.request.url.resolve(it)?.toString() }

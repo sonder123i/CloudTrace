@@ -1,7 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 悬浮窗危险按钮：黑曜石上的半透珊瑚红 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="@color/dr_overlay_danger_bg" />
-    <corners android:radius="100dp" />
-</shape>
+<!-- 悬浮窗危险按钮：克制珊瑚红底 + 波纹 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/dr_overlay_danger_bg">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dr_overlay_danger_bg" />
+            <stroke
+                android:width="0.5dp"
+                android:color="@color/dr_overlay_danger_bg" />
+            <corners android:radius="100dp" />
+        </shape>
+    </item>
+</ripple>

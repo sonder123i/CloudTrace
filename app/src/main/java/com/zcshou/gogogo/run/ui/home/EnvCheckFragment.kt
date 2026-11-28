@@ -173,14 +173,22 @@ class EnvCheckFragment : Fragment() {
         GlassRenderGate.requestRefresh(160L)
     }
 
+    private var mascotBubbleRunnable: Runnable? = null
+
     override fun onResume() {
         super.onResume()
-        refresh()
+        if (!isHidden) refresh()
     }
 
     override fun onPause() {
         if (::mascot.isInitialized) mascot.pause()
         super.onPause()
+    }
+
+    override fun onDestroyView() {
+        mascotBubbleRunnable?.let { if (::mascot.isInitialized) mascot.removeCallbacks(it) }
+        mascotBubbleRunnable = null
+        super.onDestroyView()
     }
 
     override fun onHiddenChanged(hidden: Boolean) {
@@ -218,8 +226,9 @@ class EnvCheckFragment : Fragment() {
 
     private fun refresh() {
         val context = context ?: return
+        val results = items.map { runCatching { it.checker() }.getOrDefault(false) }
         items.forEachIndexed { index, item ->
-            val ok = runCatching { item.checker() }.getOrDefault(false)
+            val ok = results[index]
             val dot = item.root.findViewById<View>(R.id.envDot)
             // 前两项是开跑必需：缺失用红灯；后面是可选增强：缺失只用中性灰点。
             (dot as? StatusOrbView)?.setState(
@@ -244,9 +253,9 @@ class EnvCheckFragment : Fragment() {
             }
         }
 
-        // 前两项是开跑必需，后三项是可选增强。
-        val requiredOk = items.take(2).count { runCatching { it.checker() }.getOrDefault(false) }
-        val optionalOk = items.drop(2).count { runCatching { it.checker() }.getOrDefault(false) }
+        // 前两项是开跑必需，后三项是可选增强（复用结果，不再二次执行 IPC/系统查询）。
+        val requiredOk = results.take(2).count { it }
+        val optionalOk = results.drop(2).count { it }
         val requiredTotal = 2
         val optionalTotal = 3
         val missing = requiredTotal - requiredOk
@@ -259,6 +268,13 @@ class EnvCheckFragment : Fragment() {
             title.text = getString(R.string.checkup_ready_title)
             desc.text = getString(R.string.checkup_ready_desc)
             guide.visibility = View.GONE
+            // 体检全绿 = 开发者选项已就绪：解锁「键盘侠鲸」（伴侣关闭时不解锁）
+            if (MascotPrefs.mode(context) != MascotMode.OFF) {
+                com.zcshou.gogogo.mascot.MascotEggStore.unlock(
+                    context,
+                    com.zcshou.gogogo.mascot.MascotEgg.KEYBOARD
+                )
+            }
         } else {
             title.text = getString(R.string.checkup_missing_title, missing)
             desc.text = getString(R.string.checkup_missing_desc)
@@ -289,7 +305,13 @@ class EnvCheckFragment : Fragment() {
 
         if (!mascotBubbleShown) {
             mascotBubbleShown = true
-            mascot.postDelayed({ mascot.showAutoBubble(bypassCooldown = true) }, 700L)
+            mascotBubbleRunnable?.let { mascot.removeCallbacks(it) }
+            val showTask = Runnable {
+                if (!isAdded || view == null) return@Runnable
+                mascot.showAutoBubble(bypassCooldown = true)
+            }
+            mascotBubbleRunnable = showTask
+            mascot.postDelayed(showTask, 700L)
         }
     }
 

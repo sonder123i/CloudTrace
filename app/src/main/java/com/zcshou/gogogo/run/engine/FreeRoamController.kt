@@ -41,6 +41,7 @@ object FreeRoamController {
         val position: TrackMathUtils.LatLng? = null,
         val baseAltitude: Double = 50.0,
         val trail: List<TrackMathUtils.LatLng> = emptyList(),
+        val trailSeq: Long = 0L,
         val attached: Boolean = false,
         val speedMps: Double = 0.0
     )
@@ -48,6 +49,8 @@ object FreeRoamController {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _state = MutableStateFlow(RoamState())
     val state: StateFlow<RoamState> = _state.asStateFlow()
+    private val trailBuffer = ArrayDeque<TrackMathUtils.LatLng>(MAX_TRAIL + 1)
+    private var trailSeq = 0L
 
     private var appContext: Context? = null
     private var injector: ILocationInjector? = null
@@ -118,8 +121,13 @@ object FreeRoamController {
         // 赋给 glideJob：drive()/stopMotion() 才能取消进行中的空降，避免两路注入交错
         glideJob = scope.launch {
             val total = TrackMathUtils.distanceMeters(from, target)
-            val steps = 14
+            // 分段随距离适度加密（单帧跳变 ≈400m 上限，总时长 ≤ ~3.3s）：
+            // 超远空降不再产生离谱的帧间位移，近距离保持原来的 0.8s 手感
+            val steps = maxOf(14.0, total / 400.0).toInt().coerceAtMost(60)
             val bearing = TrackMathUtils.bearingDegrees(from, target)
+            // loc.setSpeed 封顶到与 drive() 一致的可信区间：空降允许位置瞬移，
+            // 但 speed 字段带出 ~3900m/s 的荒谬值会被有速度校验的目标 App 判定异常
+            val speed = (total / (steps * 0.055)).coerceAtMost(15.0)
             try {
                 for (i in 1..steps) {
                     delay(55)
@@ -128,7 +136,7 @@ object FreeRoamController {
                         from.lat + (target.lat - from.lat) * f,
                         from.lng + (target.lng - from.lng) * f
                     )
-                    injectFrame(p, total / (steps * 0.055), bearing)
+                    injectFrame(p, speed, bearing)
                     appendTrail(p)
                 }
             } finally {
@@ -240,21 +248,53 @@ object FreeRoamController {
         _state.value = _state.value.copy(baseAltitude = altitudeMeters)
     }
 
-    /** 彻底结束漫游：停止驱动、移除测试 Provider、解绑并关闭 ServiceGo */
-    fun release() {
-        stopMotion()
-        runCatching { injector?.releaseInjection() }
+    fun seedPosition(position: TrackMathUtils.LatLng?) {
+        if (position == null) return
+        _state.value = _state.value.copy(position = position)
+    }
+
+    /** 手动接管结束后仅解绑自身连接，不释放 ServiceGo 测试 Provider，以免中断巡航 */
+    fun detachKeepProviders() {
+        ticker?.cancel()
+        ticker = null
+        glideJob?.cancel()
+        glideJob = null
+        motionSpeed = 0.0
         injector = null
         val ctx = appContext
         if (bindRequested && ctx != null) {
             runCatching { ctx.unbindService(connection) }
         }
         bindRequested = false
-        // 巡航会话进行中不杀 ServiceGo：它的生命周期归 RunSessionService 收尾；
-        // 启动竞态由 RunSessionService「先绑先得」兜底（绑定在先即可在 stopService 下存活）
+        trailBuffer.clear()
+        trailSeq = 0L
+        _state.value = RoamState()
+    }
+
+    /** 彻底结束漫游：停止驱动、移除测试 Provider、解绑并关闭 ServiceGo */
+    fun release() {
+        // 巡航会话接管期间禁止再发 releaseInjection/stopMotion，避免把 RunSessionService 刚建好的 Provider 删掉
+        if (!RunSessionHolder.sessionActive) {
+            stopMotion()
+            runCatching { injector?.releaseInjection() }
+        } else {
+            ticker?.cancel()
+            ticker = null
+            glideJob?.cancel()
+            glideJob = null
+            motionSpeed = 0.0
+        }
+        injector = null
+        val ctx = appContext
+        if (bindRequested && ctx != null) {
+            runCatching { ctx.unbindService(connection) }
+        }
+        bindRequested = false
         if (!RunSessionHolder.sessionActive && ctx != null) {
             runCatching { ctx.stopService(Intent(ctx, ServiceGo::class.java)) }
         }
+        trailBuffer.clear()
+        trailSeq = 0L
         _state.value = RoamState()
     }
 
@@ -289,10 +329,12 @@ object FreeRoamController {
     }
 
     private fun appendTrail(p: TrackMathUtils.LatLng) {
-        val trail = _state.value.trail.toMutableList()
-        trail.add(p)
-        while (trail.size > MAX_TRAIL) trail.removeAt(0)
-        _state.value = _state.value.copy(trail = trail)
+        if (trailBuffer.size >= MAX_TRAIL) {
+            trailBuffer.removeFirst()
+        }
+        trailBuffer.addLast(p)
+        trailSeq++
+        _state.value = _state.value.copy(trail = trailBuffer.toList(), trailSeq = trailSeq)
     }
 
     private fun lastDeviceLocation(context: Context): android.location.Location? {

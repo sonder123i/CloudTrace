@@ -24,17 +24,17 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.preference.PreferenceManager;
 
 import com.zcshou.gogogo.run.ui.home.RunHomeActivity;
+import com.zcshou.gogogo.run.ui.splash.CloudTraceEmblemView;
 import com.zcshou.gogogo.run.ui.theme.ThemeHelper;
 
 public class WelcomeActivity extends AppCompatActivity {
-    private static SharedPreferences preferences;
-    private static final String KEY_ACCEPT_AGREEMENT = "KEY_ACCEPT_AGREEMENT";
-    private static final String KEY_ACCEPT_PRIVACY = "KEY_ACCEPT_PRIVACY";
-    private static final String KEY_ONBOARDED = "KEY_ONBOARDED";
+    // 隐私同意偏好统一引用 GoApplication 的常量，避免两处各写一份字符串导致改一漏一
+    private SharedPreferences preferences;
 
     private CheckBox checkBox;
     private Boolean mAgreement = false;
     private Boolean mPrivacy = false;
+    private AlertDialog activeDialog;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -42,12 +42,13 @@ public class WelcomeActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
 
         // 已同意过协议的老用户：不再重复展示欢迎页
-        preferences = getSharedPreferences(KEY_ACCEPT_AGREEMENT, MODE_PRIVATE);
-        boolean onboarded = preferences.getBoolean(KEY_ONBOARDED, false)
-                || (preferences.getBoolean(KEY_ACCEPT_AGREEMENT, false)
-                && preferences.getBoolean(KEY_ACCEPT_PRIVACY, false));
+        preferences = getSharedPreferences(GoApplication.PREF_AGREEMENT, MODE_PRIVATE);
+        boolean onboarded = preferences.getBoolean(GoApplication.PREF_ONBOARDED, false)
+                || (preferences.getBoolean(GoApplication.PREF_AGREEMENT, false)
+                && preferences.getBoolean(GoApplication.PREF_PRIVACY, false));
         if (onboarded) {
-            goHome();
+            // 老用户跳板：交给 RunHomeActivity 播完整启动动画（首次真正看到首页）
+            goHome(false);
             return;
         }
 
@@ -55,6 +56,12 @@ public class WelcomeActivity extends AppCompatActivity {
 
         // 生成默认参数的值（一定要尽可能早的调用，因为后续有些界面可能需要使用参数）
         PreferenceManager.setDefaultValues(this, R.xml.preferences_main, false);
+
+        // 徽记循环呼吸：本页不可见 / 移除时 CloudTraceEmblemView 自己停掉帧循环
+        CloudTraceEmblemView emblem = findViewById(R.id.welcomeEmblem);
+        if (emblem != null) {
+            emblem.setMode(CloudTraceEmblemView.Mode.WELCOME_BREATHE);
+        }
 
         TextView startBtn = findViewById(R.id.startButton);
         startBtn.setOnClickListener(v -> startMainActivity());
@@ -79,6 +86,10 @@ public class WelcomeActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (activeDialog != null) {
+            activeDialog.dismiss();
+            activeDialog = null;
+        }
         super.onDestroy();
     }
 
@@ -97,7 +108,8 @@ public class WelcomeActivity extends AppCompatActivity {
     }
 
     private void showConsentConfirm() {
-        new AlertDialog.Builder(this)
+        if (activeDialog != null) activeDialog.dismiss();
+        activeDialog = new AlertDialog.Builder(this)
                 .setTitle("用户协议与隐私政策")
                 .setMessage("为提供模拟位置服务，需要你同意《用户协议》和《隐私政策》。\n\n"
                         + "我们零读取通讯录与相册、零获取设备串号，轨迹仅存本机。")
@@ -112,16 +124,21 @@ public class WelcomeActivity extends AppCompatActivity {
     private void acceptAndEnter() {
         // 勾选即视为已阅读并同意，无需逐个点开协议
         preferences.edit()
-                .putBoolean(KEY_ACCEPT_AGREEMENT, true)
-                .putBoolean(KEY_ACCEPT_PRIVACY, true)
-                .putBoolean(KEY_ONBOARDED, true)
+                .putBoolean(GoApplication.PREF_AGREEMENT, true)
+                .putBoolean(GoApplication.PREF_PRIVACY, true)
+                .putBoolean(GoApplication.PREF_ONBOARDED, true)
                 .apply();
-        goHome();
+        GoApplication.ensureMapSdkInitialized(getApplicationContext());
+        // 刚在欢迎页看完循环呼吸的徽记，进首页不再重复播放 1050ms 开屏动画
+        goHome(true);
     }
 
     /** 冷启动不申请任何系统权限，直接进入干净的主界面 */
-    private void goHome() {
+    private void goHome(boolean skipLaunchSplash) {
         Intent intent = new Intent(WelcomeActivity.this, RunHomeActivity.class);
+        if (skipLaunchSplash) {
+            intent.putExtra(RunHomeActivity.EXTRA_SKIP_LAUNCH_SPLASH, true);
+        }
         startActivity(intent);
         finish();
         overridePendingTransition(0, 0);
@@ -136,8 +153,8 @@ public class WelcomeActivity extends AppCompatActivity {
         //实例化Editor对象
         SharedPreferences.Editor editor = preferences.edit();
         //存入数据
-        editor.putBoolean(KEY_ACCEPT_AGREEMENT, mAgreement);
-        editor.putBoolean(KEY_ACCEPT_PRIVACY, mPrivacy);
+        editor.putBoolean(GoApplication.PREF_AGREEMENT, mAgreement);
+        editor.putBoolean(GoApplication.PREF_PRIVACY, mPrivacy);
         //提交修改
         editor.apply();
     }

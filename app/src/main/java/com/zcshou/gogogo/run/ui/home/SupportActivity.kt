@@ -27,6 +27,7 @@ import com.zcshou.gogogo.R
 import com.zcshou.gogogo.mascot.MascotDialogueEngine
 import com.zcshou.gogogo.mascot.MascotEgg
 import com.zcshou.gogogo.mascot.MascotEggCardView
+import com.zcshou.gogogo.mascot.MascotEggStore
 import com.zcshou.gogogo.mascot.MascotMode
 import com.zcshou.gogogo.mascot.MascotPeekView
 import com.zcshou.gogogo.mascot.MascotPrefs
@@ -160,6 +161,9 @@ class SupportActivity : AppCompatActivity() {
     /** 彩蛋资源缺失时卡片会自动隐藏，不会留下空占位。 */
     private fun showSupportEgg(egg: MascotEgg) {
         if (MascotPrefs.mode(this) == MascotMode.OFF) return
+        // 访问支持页本身即解锁「白米饭」；保存/预览时再解锁对应彩蛋
+        MascotEggStore.unlock(this, MascotEgg.RICE_BOWL)
+        MascotEggStore.unlock(this, egg)
         supportEggCard.showFor(egg, 3500L)
     }
 

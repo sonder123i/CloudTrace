@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    云迹桌面小组件配置：4×1 单行信息条。
+    只读取本机数据，不联网；点击开跑经 Activity 门控，Receiver 不直接起前台服务。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_cloudtrace_desc"
+    android:initialLayout="@layout/widget_cloudtrace_4x1"
+    android:minWidth="250dp"
+    android:minHeight="70dp"
+    android:previewLayout="@layout/widget_cloudtrace_4x1"
+    android:resizeMode="horizontal"
+    android:targetCellWidth="4"
+    android:targetCellHeight="1"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

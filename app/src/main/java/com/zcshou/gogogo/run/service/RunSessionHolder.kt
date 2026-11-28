@@ -22,4 +22,9 @@ object RunSessionHolder {
         _state.value = state
         sessionActive = state.phase != RunPhase.IDLE && state.phase != RunPhase.FINISHED
     }
+
+    internal fun reset() {
+        _state.value = RunRuntimeState()
+        sessionActive = false
+    }
 }

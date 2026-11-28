@@ -119,6 +119,15 @@
         <item name="alertDialogTheme">@style/Theme.PaceFlow.Dialog.Light</item>
     </style>
 
+    <!-- ============ 启动窗口主题（冷启动首帧底色） ============
+         只是「Activity.attach 到 onCreate 之间」那几毫秒的窗口底色，防止深色主题
+         下先闪一帧白、浅色主题下先闪一帧黑。onCreate 里的 ThemeHelper.apply()
+         会立刻换成真正的 Theme.PaceFlow / Theme.PaceFlow.Light。
+         values-night 里有同名覆盖（深色底 + 深色框架），名称必须一致。 -->
+    <style name="Theme.PaceFlow.Launch" parent="Theme.PaceFlow.Light">
+        <item name="android:windowBackground">@color/dr_launch_canvas_top</item>
+    </style>
+
     <!-- ============ Apple 单色胶囊按钮（图标 + 文字整体居中） ============ -->
     <!--
         使用 MaterialButton 的 iconGravity=textStart + iconPadding，

@@ -67,10 +67,36 @@ object ShizukuWifiHelper {
         null
     }
 
-    private fun waitFor(process: Any): Int = try {
-        val method = process.javaClass.getMethod("waitFor")
-        method.invoke(process) as Int
-    } catch (e: Throwable) {
-        -1
+    private fun waitFor(process: Any): Int {
+        return try {
+            // 排空子进程输出流防止缓冲区写满阻塞 —— 但必须放到后台线程：
+            // readBytes 会阻塞到 EOF，先排空再 waitFor 会让挂死的 svc/settings
+            // 直接吞掉整个 5s 超时预算。destroy() 关流后读线程自然退出。
+            runCatching {
+                val out = process.javaClass.getMethod("getInputStream").invoke(process) as? java.io.InputStream
+                out?.let { stream ->
+                    Thread {
+                        runCatching { stream.use { it.readBytes() } }
+                    }.apply { isDaemon = true }.start()
+                }
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val waitTimeout = process.javaClass.getMethod(
+                    "waitFor", Long::class.javaPrimitiveType, java.util.concurrent.TimeUnit::class.java
+                )
+                val finished = waitTimeout.invoke(process, 5L, java.util.concurrent.TimeUnit.SECONDS) as Boolean
+                if (!finished) {
+                    runCatching { process.javaClass.getMethod("destroy").invoke(process) }
+                    return -1
+                }
+                process.javaClass.getMethod("exitValue").invoke(process) as Int
+            } else {
+                val method = process.javaClass.getMethod("waitFor")
+                method.invoke(process) as Int
+            }
+        } catch (e: Throwable) {
+            runCatching { process.javaClass.getMethod("destroy").invoke(process) }
+            -1
+        }
     }
 }

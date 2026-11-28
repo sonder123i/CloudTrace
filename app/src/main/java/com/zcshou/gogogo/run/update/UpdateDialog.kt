@@ -3,7 +3,11 @@ package com.zcshou.gogogo.run.update
 import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.os.Build
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.StyleSpan
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.ProgressBar
@@ -41,6 +45,7 @@ object UpdateDialog {
         val forceNote = view.findViewById<TextView>(R.id.updateForceNote)
         val notesScroll = view.findViewById<MaxHeightScrollView>(R.id.updateNotesScroll)
         notesScroll.maxHeight = (160 * activity.resources.displayMetrics.density).toInt()
+        val notesLabel = view.findViewById<TextView>(R.id.updateNotesLabel)
         val notes = view.findViewById<TextView>(R.id.updateNotes)
         val cancelDownload = view.findViewById<TextView>(R.id.updateCancelDownload)
 
@@ -77,7 +82,10 @@ object UpdateDialog {
         }
         dialog.setOnDismissListener {
             scope.cancel()
-            manager.hideDialog()
+            // 仅在非配置重建（如屏幕旋转）导致的关闭时清除弹窗标记，避免旋转后弹窗消失
+            if (!activity.isChangingConfigurations) {
+                manager.hideDialog()
+            }
             onDismiss()
         }
 
@@ -114,9 +122,12 @@ object UpdateDialog {
                     )
                 )
 
-                val noteText = manifest?.releaseNotes.orEmpty().trim()
-                val showNotes = noteText.isNotEmpty() && (canDownload || showProgress)
-                notes.text = noteText
+                val noteSections = manifest?.releaseNotes
+                    ?.let(UpdateNotesFormatter::sections)
+                    .orEmpty()
+                val showNotes = noteSections.isNotEmpty() && (canDownload || showProgress)
+                notes.text = renderNotes(noteSections)
+                notesLabel.visibility = if (showNotes) View.VISIBLE else View.GONE
                 notesScroll.visibility = if (showNotes) View.VISIBLE else View.GONE
                 progress.visibility = if (showProgress) View.VISIBLE else View.GONE
                 progress.progress = if (state.phase == UpdateManager.Phase.READY) 100
@@ -194,6 +205,31 @@ object UpdateDialog {
             )
         }
         manager.startDownload()
+    }
+
+    /** 小节标题加粗，条目保持一行一条，长说明最多滚动 160dp。 */
+    private fun renderNotes(sections: List<UpdateNotesFormatter.Section>): CharSequence {
+        val out = SpannableStringBuilder()
+        sections.forEachIndexed { index, section ->
+            if (index > 0) out.append("\n\n")
+            val title = section.title
+            if (!title.isNullOrBlank()) {
+                val start = out.length
+                out.append(title)
+                out.setSpan(
+                    StyleSpan(Typeface.BOLD),
+                    start,
+                    out.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                if (section.lines.isNotEmpty()) out.append('\n')
+            }
+            section.lines.forEachIndexed { lineIndex, line ->
+                out.append(line)
+                if (lineIndex != section.lines.lastIndex) out.append('\n')
+            }
+        }
+        return out
     }
 
     private const val NOTIFICATION_PERMISSION_REQUEST = 9802

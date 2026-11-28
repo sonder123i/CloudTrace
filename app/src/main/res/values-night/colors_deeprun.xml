@@ -55,6 +55,13 @@
     <!-- L3 · 高透悬浮透镜（90%~93%） -->
     <color name="dr_l3_lens_surface">#ED1C1C1E</color>
 
+    <!--
+        L3 · AGSL 光学容器染色（深色）：80% 深空黑曜石。
+        纯黑 OLED 上不能更透——再透就会把背后冷银画布泛成死灰，
+        深色描边高光也读不出来；80% 是"透出光斑但字仍然硬"的实测平衡点。
+    -->
+    <color name="dr_l3_optical_surface">#CC1C1C1E</color>
+
     <!-- 光纤轨迹：靛蓝 → 冰青 → 紫罗兰（深色略提亮） -->
     <color name="dr_fiber_indigo">#FF8B96FF</color>
     <color name="dr_fiber_cyan">#FF7CF3F7</color>
@@ -129,19 +136,31 @@
     <!-- 跨应用悬浮窗：深色「深空黑曜石」。
          与 values/colors_deeprun.xml 成对定义：浅色走冰晶棱镜，这里保持黑曜石。
          底色压到 92% 保证任何壁纸下文字都可读，靠冰青细边与虹彩薄纱出层次。 -->
-    <color name="dr_overlay_surface">#EB141416</color>
-    <color name="dr_overlay_surface_solid">#F5141416</color>
-    <color name="dr_overlay_surface_warn">#F5101520</color>
-    <color name="dr_overlay_recess">#26FFFFFF</color>
-    <color name="dr_overlay_round">#24FFFFFF</color>
-    <color name="dr_overlay_text_primary">#FFF5F5F7</color>
-    <color name="dr_overlay_text_secondary">#FFAEAEB2</color>
-    <color name="dr_overlay_ice">#FF7DD3FC</color>
-    <color name="dr_overlay_rim_silver">#59FFFFFF</color>
-    <color name="dr_overlay_rim_ice">#66BAE6FD</color>
-    <color name="dr_overlay_ok">#FF34C759</color>
-    <color name="dr_overlay_danger">#FFFF6961</color>
-    <color name="dr_overlay_danger_bg">#33FF6961</color>
+    <color name="dr_overlay_surface">#F012151D</color>
+    <color name="dr_overlay_surface_solid">#FA12151D</color>
+    <color name="dr_overlay_surface_warn">#F5121826</color>
+    <color name="dr_overlay_tile_bg">#12FFFFFF</color>
+    <color name="dr_overlay_tile_stroke">#1AFFFFFF</color>
+    <color name="dr_overlay_recess">#1AFFFFFF</color>
+    <color name="dr_overlay_round">#22FFFFFF</color>
+    <color name="dr_overlay_ripple">#2E8AB4F8</color>
+    <color name="dr_overlay_text_primary">#FFF1F3F8</color>
+    <color name="dr_overlay_text_secondary">#FF9AA0A6</color>
+    <color name="dr_overlay_ice">#FF8AB4F8</color>
+    <color name="dr_overlay_tonal_bg">#2E8AB4F8</color>
+    <color name="dr_overlay_rim_silver">#66FFFFFF</color>
+    <color name="dr_overlay_rim_outer">#26FFFFFF</color>
+    <color name="dr_overlay_rim_ice">#738AB4F8</color>
+    <color name="dr_overlay_ok">#FF34A853</color>
+    <color name="dr_overlay_danger">#FFF28B82</color>
+    <color name="dr_overlay_danger_bg">#29F28B82</color>
+
+    <!-- Google AI Mode / Gemini 光谱流光色带（深空黑曜石上的霓虹柔光） -->
+    <color name="dr_beam_blue">#FF60A5FA</color>
+    <color name="dr_beam_indigo">#FFA78BFA</color>
+    <color name="dr_beam_coral">#FFF472B6</color>
+    <color name="dr_beam_amber">#FFFDD663</color>
+    <color name="dr_beam_teal">#FF34D399</color>
 
     <!-- 棱镜虹彩层：深色底上要更亮才看得见薄膜干涉，但透明度仍然克制 -->
     <color name="dr_prism_sheen_a">#3DFF9BD2</color>
@@ -150,4 +169,32 @@
     <color name="dr_prism_sheen_d">#247DE2FF</color>
     <color name="dr_prism_specular">#99FFFFFF</color>
     <color name="dr_prism_edge">#40FFFFFF</color>
+
+    <!-- ================= V6.6 启动动画「云迹破壳 · 跑者入画」 =================
+         与 res/values/colors_deeprun.xml 成对维护，名称必须完全一致。
+         深色版本压到深海光学色阶，但保留同一套蓝-青-薄荷色相顺序，
+         保证昼夜切换时图标「还是同一个图标」。 -->
+    <color name="dr_launch_canvas_top">#090C11</color>      <!-- 破壳画布顶端：深海光学 -->
+    <color name="dr_launch_canvas_bottom">#12161D</color>   <!-- 破壳画布底部：深空岩灰 -->
+    <!--
+        固定档（与 values/colors_deeprun.xml 取值完全相同，刻意不做昼夜区分）：
+        用于对齐「系统进程按系统 uiMode 画出的那层闪屏底色」。
+    -->
+    <color name="dr_launch_canvas_light">#EDF1F7</color>
+    <color name="dr_launch_canvas_dark">#090C11</color>
+
+    <!-- 图标徽记五图层（深色：深海发光液态玻璃） -->
+    <color name="dr_emblem_shell_top">#1E467A</color>       <!-- 液态玻璃底色 · 左上深空蓝 -->
+    <color name="dr_emblem_shell_mid">#196A8A</color>       <!-- 液态玻璃底色 · 中部深海青 -->
+    <color name="dr_emblem_shell_bottom">#1B665A</color>    <!-- 液态玻璃底色 · 底部幽绿 -->
+    <color name="dr_emblem_shell_rim">#66D8F3FF</color>     <!-- 1.5dp 镜面高光描边 -->
+    <color name="dr_emblem_glow">#527CE7FF</color>          <!-- 右上空气柔光（冰蓝） -->
+    <color name="dr_emblem_wave_high">#CC1B7B96</color>     <!-- 上层波浪起点（深海青） -->
+    <color name="dr_emblem_wave_high_end">#D9297D72</color> <!-- 上层波浪终点（幽绿柔光） -->
+    <color name="dr_emblem_wave_low">#CC2B588C</color>      <!-- 下层波浪起点（深海蓝） -->
+    <color name="dr_emblem_wave_low_end">#D93E78A8</color>  <!-- 下层波浪终点（冰蓝透光） -->
+    <color name="dr_emblem_runner">#F5FFFFFF</color>        <!-- 前倾跑者剪影 -->
+    <color name="dr_emblem_glass_tint_end">#A6A6C8EB</color><!-- 跑者/Pin 玻璃背光蓝 -->
+    <color name="dr_emblem_pin">#F5FFFFFF</color>           <!-- 悬浮镂空玻璃 Pin -->
+    <color name="dr_emblem_trail">#C7FFFFFF</color>         <!-- 云迹丝带弧线底纹 -->
 </resources>

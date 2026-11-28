@@ -72,7 +72,7 @@
                 android:layout_weight="1"
                 android:background="@null"
                 android:gravity="center_vertical"
-                android:hint="搜索操场 / 公园 / 地点"
+                android:hint="搜索地点，或粘贴 39.9,116.4"
                 android:imeOptions="actionSearch"
                 android:inputType="text"
                 android:maxLines="1"
@@ -113,6 +113,53 @@
                 app:tint="@color/pf_text_primary" />
         </LinearLayout>
     </com.zcshou.gogogo.run.ui.glass.CausticGlassView>
+
+    <!-- 图层切换胶囊：暗夜 / 标准 / 卫星（卫星图不叠自定义暗色矩阵） -->
+    <LinearLayout
+        android:id="@+id/roamLayerBar"
+        android:layout_width="wrap_content"
+        android:layout_height="32dp"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="68dp"
+        android:layout_marginEnd="16dp"
+        android:background="@drawable/bg_capsule"
+        android:elevation="5dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="4dp"
+        android:paddingTop="3dp"
+        android:paddingEnd="4dp"
+        android:paddingBottom="3dp">
+
+        <TextView
+            android:id="@+id/roamLayerDark"
+            android:layout_width="42dp"
+            android:layout_height="26dp"
+            android:layout_marginEnd="3dp"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="暗夜"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/roamLayerNormal"
+            android:layout_width="42dp"
+            android:layout_height="26dp"
+            android:layout_marginEnd="3dp"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="标准"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/roamLayerSat"
+            android:layout_width="42dp"
+            android:layout_height="26dp"
+            android:background="@drawable/bg_day_capsule"
+            android:gravity="center"
+            android:text="卫星"
+            android:textSize="10sp" />
+    </LinearLayout>
 
     <!-- 圆形玻璃定位按钮：真实折射地图内容，与顶部搜索面板同一材质 -->
     <com.zcshou.gogogo.run.ui.glass.CausticGlassView
@@ -168,8 +215,8 @@
             android:textSize="11sp" />
     </LinearLayout>
 
-    <!-- 落点确认面板：半透明玻璃 -->
-    <com.zcshou.gogogo.run.ui.glass.LiquidGlassContainer
+    <!-- 落点确认面板：与顶栏/控制台同源的地图光学玻璃（共享同一次捕获与刷新节拍） -->
+    <com.zcshou.gogogo.run.ui.glass.CausticGlassView
         android:id="@+id/roamTargetBar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -179,11 +226,16 @@
         android:layout_marginBottom="390dp"
         android:elevation="6dp"
         android:visibility="gone"
-        app:lgBevelWidth="5dp"
-        app:lgCaustics="false"
-        app:lgCornerRadius="22dp"
-        app:lgLens="true"
-        app:lgInteractive="false">
+        app:adaptiveLensScale="true"
+        app:backdropSourceId="@id/roamMap"
+        app:bevelWidth="10dp"
+        app:cornerRadius="22dp"
+        app:dispersionStrength="0.06"
+        app:glassMaterial="regular"
+        app:glassTint="@color/dr_editor_optical_tint"
+        app:refractionFalloff="2"
+        app:refractionHeight="6dp"
+        app:sensorHighlight="true">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -232,7 +284,7 @@
                     android:textSize="13sp" />
             </LinearLayout>
         </LinearLayout>
-    </com.zcshou.gogogo.run.ui.glass.LiquidGlassContainer>
+    </com.zcshou.gogogo.run.ui.glass.CausticGlassView>
 
     <!-- 底部磨砂玻璃漫游控制台 -->
     <com.zcshou.gogogo.run.ui.glass.CausticGlassView

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Google Expressive 悬浮窗色调强调胶囊：Google Blue 柔光底 + 细边 + 波纹 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/dr_overlay_ripple">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dr_overlay_tonal_bg" />
+            <stroke
+                android:width="0.75dp"
+                android:color="@color/dr_overlay_rim_ice" />
+            <corners android:radius="100dp" />
+        </shape>
+    </item>
+</ripple>

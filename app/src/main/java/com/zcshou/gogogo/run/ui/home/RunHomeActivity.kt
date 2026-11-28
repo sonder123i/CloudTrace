@@ -10,11 +10,13 @@ import android.content.res.ColorStateList
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -25,17 +27,20 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.widget.TextViewCompat
+import androidx.dynamicanimation.animation.DynamicAnimation
 import androidx.dynamicanimation.animation.FloatValueHolder
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.zcshou.gogogo.GoApplication
 import com.zcshou.gogogo.R
 import com.zcshou.gogogo.run.data.db.RunRouteEntity
 import com.zcshou.gogogo.run.data.repository.RunRepository
 import com.zcshou.gogogo.run.diagnostics.CrashJournal
 import com.zcshou.gogogo.run.engine.FreeRoamController
+import com.zcshou.gogogo.run.engine.PaceStrategy
 import com.zcshou.gogogo.run.engine.RunPhase
 import com.zcshou.gogogo.run.engine.RunRuntimeState
 import com.zcshou.gogogo.run.engine.TrackMathUtils
@@ -48,6 +53,8 @@ import com.zcshou.gogogo.run.service.RoamService
 import com.zcshou.gogogo.run.ui.glass.GlassDialogs
 import com.zcshou.gogogo.run.ui.glass.OverlayGlassStyle
 import com.zcshou.gogogo.run.ui.overlay.FloatingCapsuleView
+import com.zcshou.gogogo.run.ui.splash.LaunchPolicy
+import com.zcshou.gogogo.run.ui.splash.LaunchSplashOverlayView
 import com.zcshou.gogogo.run.ui.theme.ThemeHelper
 import com.zcshou.gogogo.run.ui.widget.LiquidTabBar
 import com.zcshou.gogogo.run.ui.widget.NavGlyphDrawable
@@ -81,6 +88,11 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         private const val MAX_AUTO_GUIDE_SHOWS = 3
         private const val KEY_GUIDE_SHOWN_COUNT = "auto_guide_count"
         const val EXTRA_SHORTCUT_ACTION = "shortcut_action"
+        /**
+         * 欢迎页交接标记：用户刚在欢迎页看完循环呼吸的徽记，
+         * 进入首页时不要再播一遍 1050ms 的「云迹破壳」。
+         */
+        const val EXTRA_SKIP_LAUNCH_SPLASH = "skip_launch_splash"
         private const val ACTION_QUICK_RUN = "default_run"
         private const val ACTION_ROAM = "roam"
         private const val ACTION_STOP = "stop"
@@ -127,6 +139,19 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
     private var overlayParams: WindowManager.LayoutParams? = null
     private var pendingStartAfterSetup: (() -> Unit)? = null
 
+    /** 启动遮罩（「云迹破壳 · 跑者入画」）；null 表示当前没有演出。 */
+    private var launchSplash: LaunchSplashOverlayView? = null
+
+    /** 遮罩是否正在覆盖首页：决定引导弹窗要不要避让。 */
+    private var launchSplashCovering = false
+
+    /** 遮罩期间被压下的配置引导；破壳结束后再补排期。 */
+    private var pendingSetupGuideAfterSplash = false
+
+    private var launchEntranceStarted = false
+    private lateinit var homeContent: View
+    private val launchSprings = mutableListOf<SpringAnimation>()
+
     private val setupLauncher =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
             if (result.resultCode == android.app.Activity.RESULT_OK) {
@@ -169,9 +194,17 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeHelper.apply(this)
         super.onCreate(savedInstanceState)
+        // 合规兜底：静态快捷方式/小部件可直达本页、绕过欢迎页。
+        // 未同意隐私政策前不落 KEY_ONBOARDED、不进首页，先送去欢迎页补同意；
+        // 同意后由 WelcomeActivity 正常回到这里。
+        if (!GoApplication.hasPrivacyConsent(this)) {
+            startActivity(Intent(this, com.zcshou.gogogo.WelcomeActivity::class.java))
+            finish()
+            return
+        }
         // 进入首页即代表已通过欢迎页，之后不再重复展示
-        getSharedPreferences("KEY_ACCEPT_AGREEMENT", MODE_PRIVATE).edit()
-            .putBoolean("KEY_ONBOARDED", true)
+        getSharedPreferences(GoApplication.PREF_AGREEMENT, MODE_PRIVATE).edit()
+            .putBoolean(GoApplication.PREF_ONBOARDED, true)
             .apply()
         // 每次真正进入首页记一次打开：Star 邀请靠它判断「是不是常客」，
         // 转屏恢复不重复计数，否则一次冷启动会被记成好几次。
@@ -182,6 +215,10 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         crashPromptShown = savedInstanceState?.getBoolean(STATE_CRASH_SHOWN, false) ?: false
         ThemeHelper.enableEdgeToEdge(this)
         setContentView(R.layout.activity_run_home)
+        // 启动动效策略必须先于各个 handle*Intent 判定：它们会把 extra removeExtra 掉。
+        val launchMode = LaunchPolicy.decide(buildLaunchInput(savedInstanceState))
+        // 让 maybeShowSetupGuide() 在演出期间只登记、不排期。
+        launchSplashCovering = LaunchPolicy.coversHome(launchMode)
         // 不再给整页加 systemBars padding：地图需要真正铺到四边，
         // 顶部 inset 由各页面自己消化，底部 inset 只抬高悬浮导航胶囊。
         repository = RunRepository(applicationContext)
@@ -190,8 +227,8 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         tabRoam = findViewById(R.id.tabRoam)
         tabEnv = findViewById(R.id.tabEnv)
         tabSettings = findViewById(R.id.tabSettings)
-        bottomTabs = findViewById(R.id.bottomTabs)
         navContainerView = findViewById(R.id.bottomTabs)
+        bottomTabs = navContainerView
         navGlassView = findViewById<com.example.liquidglass.LiquidGlassView>(R.id.navGlass)
         navShadowView =
             findViewById<com.zcshou.gogogo.run.ui.widget.NavShadowView>(R.id.navShadow)
@@ -200,8 +237,13 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         navMini = findViewById(R.id.navMini)
         navMini.setOnClickListener { expandNav() }
         navMiniGlass.setOnClickListener { expandNav() }
+        // 注意：必须在这里取，不能写进下面的 apply{} —— apply 的接收者是 View，
+        // 里面的 findViewById 会绑到 navGlassView 自己身上，找不到必然返回 null，
+        // 于是 backdropSource 一直是空，库就退化成"整窗捕获"，把导航条自己也画进背景。
+        val homeContent = findViewById<android.view.View>(R.id.fragmentContainer)
+        this.homeContent = homeContent
         navMiniGlass.apply {
-            backdropSource = findViewById(R.id.fragmentContainer)
+            backdropSource = homeContent
             com.zcshou.gogogo.run.ui.glass.GlassRenderGate.register(this)
             com.zcshou.gogogo.run.ui.glass.OpticalGlassTuning.apply(
                 this,
@@ -214,7 +256,7 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         }
         navGlassView.apply {
             // 导航胶囊折射底层页面：与旧版保持同一父级/同一 source 关系
-            backdropSource = findViewById(R.id.fragmentContainer)
+            backdropSource = homeContent
             com.zcshou.gogogo.run.ui.glass.GlassRenderGate.register(this)
             // 小尺寸胶囊单独收窄折射带，避免整块都是边缘
             com.zcshou.gogogo.run.ui.glass.OpticalGlassTuning.apply(
@@ -309,6 +351,9 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
                 UpdateManager.getInstance(this).checkForUpdate(manual = false)
             }
         }, 1500)
+
+        // 遮罩最后挂：此时首页数据、Tab、底栏都已经就位，动画只负责「破壳露出」
+        mountLaunchSplash(launchMode)
     }
 
     /**
@@ -343,8 +388,181 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         }
     }
 
-    private fun maybeShowSetupGuide() {
+    // ---------------- 启动动效（云迹破壳 · 跑者入画） ----------------
+
+    /**
+     * 把平台状态翻译成纯逻辑输入。
+     *
+     * 这里只在 `onCreate` 调一次，且**必须早于** handle*Intent——
+     * 那几个方法会把 extra 移除，晚读就永远判定成「常规冷启动」。
+     */
+    private fun buildLaunchInput(savedInstanceState: Bundle?): LaunchPolicy.Input {
+        val animatorScale = runCatching {
+            Settings.Global.getFloat(
+                contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f
+            )
+        }.getOrDefault(1f)
+        val powerSave = runCatching {
+            (getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isPowerSaveMode == true
+        }.getOrDefault(false)
+        val skipSplash = intent.getBooleanExtra(EXTRA_SKIP_LAUNCH_SPLASH, false)
+        // 用完即弃：避免后续 resume / 复用同一 Intent 时被误判成「永远跳过」
+        if (skipSplash) intent.removeExtra(EXTRA_SKIP_LAUNCH_SPLASH)
+        return LaunchPolicy.Input(
+            hasSavedInstanceState = savedInstanceState != null,
+            hasShortcutAction = intent.hasExtra(EXTRA_SHORTCUT_ACTION),
+            hasShortcutRouteId = intent.hasExtra(
+                com.zcshou.gogogo.run.guard.RunShortcutManager.EXTRA_SHORTCUT_ROUTE_ID
+            ),
+            hasAutoRouteId = intent.hasExtra(RunScheduleNotifier.EXTRA_AUTO_ROUTE_ID),
+            openRoam = intent.getBooleanExtra(RoamService.EXTRA_OPEN_ROAM, false),
+            showUpdate = intent.getBooleanExtra(UpdateManager.EXTRA_SHOW_UPDATE, false),
+            skipLaunchSplash = skipSplash,
+            animatorScale = animatorScale,
+            renderSuppressed = com.zcshou.gogogo.run.ui.glass.DeepRunGlassManager.isRenderSuppressed,
+            powerSaveMode = powerSave
+        )
+    }
+
+    private fun mountLaunchSplash(mode: LaunchPolicy.Mode) {
+        if (isFinishing || isDestroyed) {
+            launchSplashCovering = false
+            return
+        }
+        when (mode) {
+            LaunchPolicy.Mode.FULL_SPLASH -> {
+                prepareLaunchEntrance()
+                // 启动路径上的任何异常都不能让用户停在「半透明首页」：失败就当没演过
+                val mounted = runCatching { addFullSplashOverlay() }.getOrDefault(false)
+                if (!mounted) {
+                    launchSplashCovering = false
+                    clearLaunchEntrance()
+                }
+            }
+            LaunchPolicy.Mode.FAST_CUT -> {
+                // 直达场景只做极简淡入：不挂遮罩、不拦截任何点击
+                launchSplashCovering = false
+                homeContent.alpha = 0.86f
+                homeContent.animate()
+                    .alpha(1f)
+                    .setDuration(LaunchPolicy.FAST_CUT_DURATION_MS)
+                    .start()
+            }
+            LaunchPolicy.Mode.NONE -> launchSplashCovering = false
+        }
+    }
+
+    private fun addFullSplashOverlay(): Boolean {
+        val homeRoot = findViewById<View>(R.id.homeRoot) as? FrameLayout ?: return false
+        val overlay = LaunchSplashOverlayView(this).apply {
+            // 破壳那一刻首页同步落位；遮罩移除后再恢复静态 0fps
+            onRevealStart = { startLaunchEntrance() }
+            onFinished = { onLaunchSplashFinished() }
+        }
+        homeRoot.addView(
+            overlay,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        launchSplash = overlay
+        return true
+    }
+
+    /** 首页先「退后半步」，等破壳时再弹回原位。 */
+    private fun prepareLaunchEntrance() {
+        launchEntranceStarted = false
+        homeContent.animate().cancel()
+        homeContent.alpha = 0.15f
+        homeContent.translationY = dp(14).toFloat()
+        navContainerView.translationY = dp(24).toFloat()
+        navGlassView.translationY = dp(24).toFloat()
+        navShadowView.translationY = dp(24).toFloat()
+    }
+
+    /** 底部导航弹性升起（阻尼 0.76 / 刚度 360），内容区同步淡入上浮。 */
+    private fun startLaunchEntrance() {
+        if (launchEntranceStarted) return
+        launchEntranceStarted = true
+        homeContent.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(380L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+        launchSprings.forEach { runCatching { it.cancel() } }
+        launchSprings.clear()
+        launchSprings.add(springRise(navContainerView))
+        launchSprings.add(springRise(navGlassView))
+        launchSprings.add(springRise(navShadowView))
+    }
+
+    private fun springRise(view: View): SpringAnimation =
+        SpringAnimation(view, DynamicAnimation.TRANSLATION_Y, 0f).apply {
+            setSpring(
+                SpringForce(0f).apply {
+                    dampingRatio = 0.76f
+                    stiffness = 360f
+                }
+            )
+            start()
+        }
+
+    /** 立即把所有入场位移归零：既用于收尾，也用于点击快进 / 退到后台。 */
+    private fun clearLaunchEntrance() {
+        if (!::homeContent.isInitialized) return
+        launchSprings.forEach { runCatching { it.cancel() } }
+        launchSprings.clear()
+        homeContent.animate().cancel()
+        homeContent.alpha = 1f
+        homeContent.translationY = 0f
+        if (::navContainerView.isInitialized) {
+            navContainerView.translationY = 0f
+            navGlassView.translationY = 0f
+            navShadowView.translationY = 0f
+        }
+    }
+
+    private fun onLaunchSplashFinished() {
+        launchSplash = null
+        launchSplashCovering = false
+        // 不在此处强行 cancel 尚未落定完的底部弹簧，让 0.76 阻尼的最后一点回弹余韵自然完成
+        // 底栏玻璃的采样画面停在入场动画的中间帧，这里补一帧确保落位清晰
+        com.zcshou.gogogo.run.ui.glass.GlassRenderGate.requestRefresh(160L)
+        if (pendingSetupGuideAfterSplash) {
+            pendingSetupGuideAfterSplash = false
+            // 让遮罩彻底移除后再排期，避免 BottomSheet 与最后一帧抢同一帧
+            maybeShowSetupGuide(delayMs = 200L)
+        }
+    }
+
+    /**
+     * 停掉启动演出并复位首页。
+     *
+     * `onPause` / `onDestroy` 都必须走到这里：遮罩是挂在 Activity 的 View 树上的，
+     * 退到后台后继续跑帧只会白耗电；直接从事件里同步移除也容易踩到 dispatch 期间改树。
+     */
+    private fun finishLaunchExperience() {
+        val overlay = launchSplash
+        launchSplash = null
+        launchSplashCovering = false
+        pendingSetupGuideAfterSplash = false
+        overlay?.apply {
+            onRevealStart = null
+            onFinished = null
+            runCatching { finishNow() }
+        }
+        clearLaunchEntrance()
+    }
+
+    private fun maybeShowSetupGuide(delayMs: Long = 700L) {
         if (SetupGuard.isReady(this)) return
+        // 破壳演出期间绝不弹：既挡画面，也会让用户看不清发生了什么
+        if (launchSplashCovering) {
+            pendingSetupGuideAfterSplash = true
+            return
+        }
         val prefs = getSharedPreferences("pf_guide", MODE_PRIVATE)
         // 曾经是「弹过一次就永不再弹」：用户随手关掉 X 之后，除非自己发现首页那条
         // 红条，否则再也见不到引导，开跑时才被挡回来 —— 那时上下文已经丢了。
@@ -356,11 +574,13 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         prefs.edit().putInt(KEY_GUIDE_SHOWN_COUNT, shown + 1).apply()
         window.decorView.postDelayed({
             if (isFinishing || isDestroyed) return@postDelayed
+            // 破壳结束到引导弹出之间用户可能已经切走，别把 BottomSheet 盖到别的界面上
+            if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) return@postDelayed
             if (!SetupGuard.isReady(this)) {
                 SetupWizardBottomSheet.newInstance()
                     .show(supportFragmentManager, "setup_guide")
             }
-        }, 700)
+        }, delayMs)
     }
 
     /**
@@ -502,6 +722,8 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
     override fun onResume() {
         super.onResume()
         com.zcshou.gogogo.run.ui.glass.GlassRenderGate.setActive(true)
+        // 回前台重算玻璃层级缓存：系统省电模式/高对比度开关可能在后台被切换
+        com.zcshou.gogogo.run.ui.glass.DeepRunGlassManager.refreshAll()
         // 悬浮胶囊主要显示在别的 App 之上，所以「本页在前台」并不是流光该跑的条件，
         // 只要没锁屏就继续跑（见下面的 screenReceiver）。
         setCapsuleBeamPaused(false)
@@ -531,12 +753,15 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
     }
 
     override fun onPause() {
+        // 启动遮罩不能跟着退到后台继续跑帧：先收尾再关渲染闸门
+        finishLaunchExperience()
         // 锁屏 / 切后台 / 跨应用巡航：立即停掉玻璃着色器刷新
         com.zcshou.gogogo.run.ui.glass.GlassRenderGate.setActive(false)
         super.onPause()
     }
 
     override fun onDestroy() {
+        finishLaunchExperience()
         runCatching { updateDialog?.dismiss() }
         updateDialog = null
         runCatching { starDialog?.dismiss() }
@@ -545,10 +770,16 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         supportDialog = null
         runCatching { crashDialog?.dismiss() }
         crashDialog = null
+        runCatching { detourDialog?.dismiss() }
+        detourDialog = null
         runCatching { unregisterReceiver(screenReceiver) }
         hideCapsule()
         super.onDestroy()
     }
+
+    private var detourDialog: AlertDialog? = null
+    private var relayoutRunnable: Runnable? = null
+    private var relayoutBoundsRunnable: Runnable? = null
 
     // ---------------- RunHost ----------------
 
@@ -558,11 +789,12 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         paceSecPerKm: Int,
         laneDrift: Boolean,
         cooldown: Boolean,
-        reverseDirection: Boolean
+        reverseDirection: Boolean,
+        paceStrategy: PaceStrategy
     ) {
         if (!SetupGuard.isReady(this)) {
             openSetupWizard {
-                startRun(route, targetKm, paceSecPerKm, laneDrift, cooldown, reverseDirection)
+                startRun(route, targetKm, paceSecPerKm, laneDrift, cooldown, reverseDirection, paceStrategy)
             }
             return
         }
@@ -570,7 +802,7 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         // 否则 RunSessionService.startForeground 会抛 SecurityException
         if (!EnvGuardManager.hasRuntimeLocation(this)) {
             pendingRunStart = {
-                startRun(route, targetKm, paceSecPerKm, laneDrift, cooldown, reverseDirection)
+                startRun(route, targetKm, paceSecPerKm, laneDrift, cooldown, reverseDirection, paceStrategy)
             }
             runLocationPermissionLauncher.launch(
                 arrayOf(
@@ -581,14 +813,15 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
             return
         }
         val launch: () -> Unit = {
-            ensureNotificationPermission()
+            ensureNotificationAndRecognitionPermissions()
             RoamService.stop(this)
             ContextCompat.startForegroundService(
                 this,
                 RunSessionService.startIntent(
                     this, route.id, targetKm, paceSecPerKm, laneDrift, cooldown,
                     linkedPkg = com.zcshou.gogogo.run.data.prefs.RunPrefs.targetApp(this),
-                    reverseDirection = reverseDirection
+                    reverseDirection = reverseDirection,
+                    paceStrategy = paceStrategy.name
                 )
             )
             // 记忆本次参数，支撑下次 1 步直达
@@ -607,9 +840,11 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
             Unit
         }
         if (EnvGuardManager.isWifiActivelyConnected(this)) {
+            // 伴侣模式开启时，鲸鲸同步冒一句 Wi-Fi 调侃（不改变原有拦截流程）
+            maybeMascotWifiBubble()
             com.zcshou.gogogo.run.ui.glass.GlassDialogs.builder(this)
                 .setTitle("当前已连接 Wi-Fi")
-                .setMessage("Wi-Fi 可能让定位闪回真实位置，建议暂时关闭后再开跑。")
+                .setMessage(wifiWarningMessage())
                 .setPositiveButton("去关闭 Wi-Fi") { _, _ ->
                     pendingLaunchAfterWifi = launch
                     startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
@@ -620,6 +855,36 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         } else {
             launch()
         }
+    }
+
+    /** 拦截弹窗正文；伴侣模式开启时附一句鲸鲸的提醒 */
+    private fun wifiWarningMessage(): String {
+        val base = "Wi-Fi 可能让定位闪回真实位置，建议暂时关闭后再开跑。"
+        if (com.zcshou.gogogo.mascot.MascotPrefs.mode(this) ==
+            com.zcshou.gogogo.mascot.MascotMode.OFF
+        ) {
+            return base
+        }
+        val line = com.zcshou.gogogo.mascot.MascotDialogueEngine.onSystemEvent(
+            com.zcshou.gogogo.mascot.MascotDialogueEngine.State.WARNING_WIFI,
+            bypassCooldown = true
+        ) ?: return base
+        return "$base\n\n鲸鲸：$line"
+    }
+
+    /**
+     * 首页有迷你角标时让它直接冒泡；否则静默（不为了说一句话去新建视图）。
+     */
+    private fun maybeMascotWifiBubble() {
+        val badge = findViewById<com.zcshou.gogogo.mascot.MascotMiniBadgeView>(
+            R.id.homeMiniMascot
+        ) ?: return
+        if (badge.visibility != View.VISIBLE) return
+        val line = com.zcshou.gogogo.mascot.MascotDialogueEngine.onSystemEvent(
+            com.zcshou.gogogo.mascot.MascotDialogueEngine.State.WARNING_WIFI,
+            bypassCooldown = true
+        ) ?: return
+        badge.showBubble(line, 4_000L)
     }
 
     override fun pauseResume() {
@@ -651,17 +916,23 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         val view = layoutInflater.inflate(R.layout.dialog_detour_map, null)
         val mapView = view.findViewById<com.baidu.mapapi.map.MapView>(R.id.detourMap)
         val map = mapView.map
+        com.zcshou.gogogo.run.ui.theme.MapStyleHelper.applyForTheme(mapView)
+        map.setOnMapLoadedCallback {
+            com.zcshou.gogogo.run.ui.theme.MapStyleHelper.applyForTheme(mapView)
+        }
         val bd = com.zcshou.gogogo.run.engine.CoordTransformUtil.wgs84ToBd09(position.lat, position.lng)
         val center = com.baidu.mapapi.model.LatLng(bd.lat, bd.lng)
         runCatching {
             map.setMapStatus(com.baidu.mapapi.map.MapStatusUpdateFactory.newLatLngZoom(center, 18f))
             map.addOverlay(com.baidu.mapapi.map.MarkerOptions().position(center).title("当前位置"))
         }
+        runCatching { detourDialog?.dismiss() }
         val dialog = AlertDialog.Builder(this)
             .setTitle("临时插点 · 300m 范围")
             .setView(view)
             .setNegativeButton("取消", null)
             .create()
+        detourDialog = dialog
         map.setOnMapClickListener(object : com.baidu.mapapi.map.BaiduMap.OnMapClickListener {
             override fun onMapClick(tapped: com.baidu.mapapi.model.LatLng) {
                 val wgs = com.zcshou.gogogo.run.engine.CoordTransformUtil
@@ -678,8 +949,10 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         })
         dialog.setOnShowListener { runCatching { mapView.onResume() } }
         dialog.setOnDismissListener {
+            runCatching { map.setOnMapLoadedCallback(null) }
             runCatching { mapView.onPause() }
             runCatching { mapView.onDestroy() }
+            if (detourDialog === dialog) detourDialog = null
         }
         dialog.show()
     }
@@ -700,19 +973,25 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
         val view = capsule ?: return
         val wm = windowManager ?: return
         val params = overlayParams ?: return
-        view.postDelayed({
+        relayoutRunnable?.let { view.removeCallbacks(it) }
+        relayoutBoundsRunnable?.let { view.removeCallbacks(it) }
+        val boundsTask = Runnable {
+            params.x = params.x.coerceIn(0, (screenWidth() - view.width).coerceAtLeast(0))
+            params.y = params.y.coerceIn(
+                statusBarHeight(),
+                (screenHeight() - view.height - navBarHeight()).coerceAtLeast(statusBarHeight())
+            )
+            runCatching { wm.updateViewLayout(view, params) }
+        }
+        val layoutTask = Runnable {
             params.width = WindowManager.LayoutParams.WRAP_CONTENT
             params.height = WindowManager.LayoutParams.WRAP_CONTENT
             runCatching { wm.updateViewLayout(view, params) }
-            view.postDelayed({
-                params.x = params.x.coerceIn(0, (screenWidth() - view.width).coerceAtLeast(0))
-                params.y = params.y.coerceIn(
-                    statusBarHeight(),
-                    (screenHeight() - view.height - navBarHeight()).coerceAtLeast(statusBarHeight())
-                )
-                runCatching { wm.updateViewLayout(view, params) }
-            }, 40)
-        }, 60)
+            view.postDelayed(boundsTask, 40)
+        }
+        relayoutBoundsRunnable = boundsTask
+        relayoutRunnable = layoutTask
+        view.postDelayed(layoutTask, 60)
     }
 
     override fun stopSimulation() {
@@ -765,20 +1044,42 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
 
     private fun observeSession() {
         lifecycleScope.launch {
-            RunSessionHolder.state.collect { state ->
-                latestState = state
-                renderHeader(state)
-                renderCapsule(state)
+            // 悬浮胶囊是常驻窗口：退到后台（onStop）后窗口仍在屏幕上，里程/配速必须继续刷新。
+            // 之前跟随 STARTED 会导致离开 App 后胶囊冻结在旧数字，看起来像模拟已停止。
+            repeatOnLifecycle(Lifecycle.State.CREATED) {
+                RunSessionHolder.state.collect { state ->
+                    latestState = state
+                    renderHeader(state)
+                    renderCapsule(state)
+                }
             }
         }
     }
 
-    private fun ensureNotificationPermission() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFICATIONS)
+    /**
+     * 通知 + 计步两个软权限合并成一次 requestPermissions 弹窗：
+     * 同一帧内连发两次请求时，部分系统版本第二次会顶掉/取消第一次，
+     * Android 13+ 的 POST_NOTIFICATIONS 弹窗可能永远不出现。
+     * 不阻塞开跑：本次运行未授权的功能按各自降级路径静默禁用，
+     * 授权后下一次运行自动生效。
+     */
+    private fun ensureNotificationAndRecognitionPermissions() {
+        val missing = buildList {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(this@RunHomeActivity, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                ContextCompat.checkSelfPermission(this@RunHomeActivity, Manifest.permission.ACTIVITY_RECOGNITION) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                add(Manifest.permission.ACTIVITY_RECOGNITION)
+            }
+        }
+        if (missing.isNotEmpty()) {
+            requestPermissions(missing.toTypedArray(), REQ_NOTIFICATIONS)
         }
     }
 
@@ -1125,6 +1426,10 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
 
     private fun hideCapsule() {
         val view = capsule ?: return
+        relayoutRunnable?.let { view.removeCallbacks(it) }
+        relayoutBoundsRunnable?.let { view.removeCallbacks(it) }
+        relayoutRunnable = null
+        relayoutBoundsRunnable = null
         OverlayGlassStyle.cancelSnap(view)
         runCatching { windowManager?.removeView(view) }
         capsule = null

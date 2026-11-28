@@ -1,0 +1,20 @@
+<resources>
+    <!--
+        Android 12+ 的系统 SplashWindow 定制（API 31+）。
+
+        系统启动窗口无法删除：进程还没起来时它就画好了。我们能做的是让它
+        **看起来就是启动动画的第一帧**，接棒时零跳变：
+        - 底色 = 破壳画布顶端色，与 LaunchSplashOverlayView 的渐变起点同值；
+        - 图标 = ic_splash_emblem（96dp 徽记居中于 288dp 视窗），
+          尺寸与覆盖层里的 96dp 徽记一致；
+        - 图标底板设为透明，去掉系统默认那张白卡片。
+
+        与 values-night-v31/styles.xml 成对维护，名称必须完全一致。
+    -->
+    <style name="Theme.PaceFlow.Launch" parent="Theme.PaceFlow.Light">
+        <item name="android:windowBackground">@color/dr_launch_canvas_top</item>
+        <item name="android:windowSplashScreenBackground">@color/dr_launch_canvas_top</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_emblem</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@android:color/transparent</item>
+    </style>
+</resources>

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    重复星期胶囊（一~日）：选中态用主题强调色反转（浅色曜石黑 / 深色纯白），
+    未选中态沿用通用玻璃胶囊底色，昼夜由 pf_* 令牌自动翻转。
+-->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/pf_volt" />
+            <corners android:radius="100dp" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/pf_capsule_surface" />
+            <stroke
+                android:width="0.5dp"
+                android:color="@color/pf_panel_stroke" />
+            <corners android:radius="100dp" />
+        </shape>
+    </item>
+</selector>

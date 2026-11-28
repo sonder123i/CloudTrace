@@ -45,8 +45,13 @@ class PrismGlassDrawable @JvmOverloads constructor(
 
     private val rect = RectF()
     private val shape = Path()
-    private val rimShape = Path()
+    private val outerRimShape = Path()
+    private val innerRimShape = Path()
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val outerRimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 0.85f * density
+    }
     private val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 1f * density
@@ -62,6 +67,7 @@ class PrismGlassDrawable @JvmOverloads constructor(
         if (warn) R.color.dr_overlay_surface_warn else R.color.dr_overlay_surface
     )
     private val specular = context.getColor(R.color.dr_prism_specular)
+    private val rimOuter = context.getColor(R.color.dr_overlay_rim_outer)
     private val rimSilver = context.getColor(R.color.dr_overlay_rim_silver)
     private val rimIce = context.getColor(R.color.dr_overlay_rim_ice)
 
@@ -69,7 +75,7 @@ class PrismGlassDrawable @JvmOverloads constructor(
      * 深色底上镜面高光必须收着画。
      *
      * 同一套 alpha 叠在白底和黑曜石上效果完全不同：白底需要较强高光才显厚度，
-     * 黑底上 45% 高的镜面高光会把整块面板冲成浅灰，黑曜石质感全丢。
+     * 黑底上大面积镜面高光会把整块面板冲成浅灰，深空质感全丢。
      * 这里按底色亮度反比缩放——底色越暗，叠层越轻。
      */
     private val isDarkSurface: Boolean = runCatching {
@@ -79,81 +85,138 @@ class PrismGlassDrawable @JvmOverloads constructor(
         (0.213f * r + 0.715f * g + 0.072f * b) < 0.5f
     }.getOrDefault(false)
 
-    private val specularFactor = if (isDarkSurface) 0.22f else 1f
-    private val innerShadowFactor = if (isDarkSurface) 0.35f else 1f
+    private val specularFactor = if (isDarkSurface) 0.24f else 0.9f
+    private val innerShadowFactor = if (isDarkSurface) 0.4f else 0.85f
 
-    override fun draw(canvas: Canvas) {
-        val b = bounds
-        if (b.isEmpty) return
+    private var cachedLeft = Int.MIN_VALUE
+    private var cachedTop = Int.MIN_VALUE
+    private var cachedRight = Int.MIN_VALUE
+    private var cachedBottom = Int.MIN_VALUE
+    private var cachedAlpha = -1f
+    private var cachedRadius = 0f
+    private var baseShader: LinearGradient? = null
+    private var specShader: LinearGradient? = null
+    private var shadowShader: LinearGradient? = null
+    private var rimShader: LinearGradient? = null
+    private var sheenShader: LinearGradient? = null
+
+    private fun ensureCache(b: android.graphics.Rect) {
+        if (b.left == cachedLeft && b.top == cachedTop &&
+            b.right == cachedRight && b.bottom == cachedBottom &&
+            alphaScale == cachedAlpha
+        ) {
+            return
+        }
+        cachedLeft = b.left
+        cachedTop = b.top
+        cachedRight = b.right
+        cachedBottom = b.bottom
+        cachedAlpha = alphaScale
+
         rect.set(b)
         val radius = cornerRadiusPx.coerceAtMost(minOf(b.width(), b.height()) / 2f)
+        cachedRadius = radius
         shape.reset()
         shape.addRoundRect(rect, radius, radius, Path.Direction.CW)
 
-        val save = canvas.save()
-        canvas.clipPath(shape)
+        outerRimShape.reset()
+        val outerInset = outerRimPaint.strokeWidth / 2f
+        outerRimShape.addRoundRect(
+            rect.left + outerInset, rect.top + outerInset, rect.right - outerInset, rect.bottom - outerInset,
+            (radius - outerInset).coerceAtLeast(0f), (radius - outerInset).coerceAtLeast(0f),
+            Path.Direction.CW
+        )
 
-        // Rect 的字段是 Int，LinearGradient 只接受 Float —— 先提成本地浮点量
+        innerRimShape.reset()
+        val innerInset = outerRimPaint.strokeWidth + rimPaint.strokeWidth / 2f
+        innerRimShape.addRoundRect(
+            rect.left + innerInset, rect.top + innerInset, rect.right - innerInset, rect.bottom - innerInset,
+            (radius - innerInset).coerceAtLeast(0f), (radius - innerInset).coerceAtLeast(0f),
+            Path.Direction.CW
+        )
+
         val bLeft = b.left.toFloat()
         val bTop = b.top.toFloat()
         val bBottom = b.bottom.toFloat()
         val h = b.height().toFloat()
+        val diagX = bLeft + b.width() * 0.25f
 
-        // 1. 底色：顶部提亮 6% 的竖向渐变（走 alpha 管道，setAlpha 后不退化成实心板）
-        paint.shader = LinearGradient(
+        baseShader = LinearGradient(
+            bLeft, bTop, diagX, bBottom,
+            intArrayOf(
+                withAlpha(ColorUtils.blendARGB(surface, Color.WHITE, if (isDarkSurface) 0.04f else 0.08f), 1f),
+                withAlpha(surface, 1f),
+                withAlpha(ColorUtils.blendARGB(surface, Color.BLACK, if (isDarkSurface) 0.06f else 0.02f), 1f)
+            ),
+            floatArrayOf(0f, 0.55f, 1f),
+            Shader.TileMode.CLAMP
+        )
+        specShader = LinearGradient(
+            bLeft, bTop, bLeft, bTop + h * 0.36f,
+            withAlpha(specular, 0.65f * specularFactor), Color.TRANSPARENT,
+            Shader.TileMode.CLAMP
+        )
+        shadowShader = LinearGradient(
+            bLeft, bTop + h * 0.72f, bLeft, bBottom,
+            Color.TRANSPARENT, withAlpha(Color.BLACK, 0.14f * innerShadowFactor),
+            Shader.TileMode.CLAMP
+        )
+        rimShader = LinearGradient(
             bLeft, bTop, bLeft, bBottom,
-            withAlpha(ColorUtils.blendARGB(surface, Color.WHITE, 0.06f), 1f),
-            withAlpha(surface, 1f),
+            intArrayOf(
+                withAlpha(rimSilver, 0.95f),
+                withAlpha(rimIce, 0.75f),
+                withAlpha(rimSilver, 0.22f)
+            ),
+            floatArrayOf(0f, 0.35f, 1f),
             Shader.TileMode.CLAMP
         )
+        sheenShader = if (h > 14f * density && b.right - b.left > 2.2f * radius) {
+            val y = b.top + 1.2f * density
+            LinearGradient(
+                b.left + radius, y, b.right - radius, y,
+                intArrayOf(Color.TRANSPARENT, withAlpha(rimIce, 0.8f), Color.TRANSPARENT),
+                floatArrayOf(0f, 0.5f, 1f),
+                Shader.TileMode.CLAMP
+            )
+        } else {
+            null
+        }
+    }
+
+    override fun draw(canvas: Canvas) {
+        val b = bounds
+        if (b.isEmpty) return
+        ensureCache(b)
+
+        val save = canvas.save()
+        canvas.clipPath(shape)
+
+        paint.shader = baseShader
         canvas.drawRect(rect, paint)
 
-        // 2. 镜面高光：顶部受光面
-        paint.shader = LinearGradient(
-            bLeft, bTop, bLeft, bTop + h * 0.45f,
-            withAlpha(specular, 0.75f * specularFactor), Color.TRANSPARENT,
-            Shader.TileMode.CLAMP
-        )
+        paint.shader = specShader
         canvas.drawRect(rect, paint)
 
-        // 3. 底部内阴影：压出厚度
-        paint.shader = LinearGradient(
-            bLeft, bTop + h * 0.7f, bLeft, bBottom,
-            Color.TRANSPARENT, withAlpha(Color.BLACK, 0.18f * innerShadowFactor),
-            Shader.TileMode.CLAMP
-        )
+        paint.shader = shadowShader
         canvas.drawRect(rect, paint)
 
         paint.shader = null
         canvas.restoreToCount(save)
 
-        // 4. 冷银描边：上亮下淡
-        rimPaint.shader = LinearGradient(
-            bLeft, bTop, bLeft, bBottom,
-            intArrayOf(withAlpha(rimSilver, 1f), withAlpha(rimIce, 1f), withAlpha(rimSilver, 0.35f)),
-            floatArrayOf(0f, 0.45f, 1f),
-            Shader.TileMode.CLAMP
-        )
-        rimShape.reset()
-        val inset = rimPaint.strokeWidth / 2f
-        rimShape.addRoundRect(
-            rect.left + inset, rect.top + inset, rect.right - inset, rect.bottom - inset,
-            (radius - inset).coerceAtLeast(0f), (radius - inset).coerceAtLeast(0f),
-            Path.Direction.CW
-        )
-        canvas.drawPath(rimShape, rimPaint)
+        // 双层倒角描边：外圈冷静微边界 + 内圈顶部受光高光环，增强玻璃切角层次
+        outerRimPaint.color = withAlpha(rimOuter, 1f)
+        canvas.drawPath(outerRimShape, outerRimPaint)
+
+        rimPaint.shader = rimShader
+        canvas.drawPath(innerRimShape, rimPaint)
         rimPaint.shader = null
 
-        // 5. 顶部一线冰青高光
-        if (h > 12f * density) {
-            val y = b.top + 1f * density
-            sheenPaint.shader = LinearGradient(
-                b.left + radius, y, b.right - radius, y,
-                intArrayOf(Color.TRANSPARENT, withAlpha(rimIce, 0.9f), Color.TRANSPARENT),
-                floatArrayOf(0f, 0.5f, 1f),
-                Shader.TileMode.CLAMP
-            )
-            canvas.drawLine(b.left + radius, y, b.right - radius, y, sheenPaint)
+        val topSheen = sheenShader
+        if (topSheen != null) {
+            val y = b.top + 1.2f * density
+            sheenPaint.shader = topSheen
+            canvas.drawLine(b.left + cachedRadius, y, b.right - cachedRadius, y, sheenPaint)
             sheenPaint.shader = null
         }
     }
@@ -175,9 +238,12 @@ class PrismGlassDrawable @JvmOverloads constructor(
     override fun getOpacity(): Int = PixelFormat.TRANSLUCENT
 
     companion object {
-        /** 给 View 套上磨砂玻璃底片（替换原来的静态 shape 背景）。 */
+        /** 给 View 套上磨砂玻璃底片（若为 CapsuleShellView 同步写入圆角阴影轮廓）。 */
         fun attach(view: View, cornerRadiusDp: Float, warn: Boolean = false) {
             val radius = cornerRadiusDp * view.resources.displayMetrics.density
+            if (view is CapsuleShellView) {
+                view.setOutlineCornerRadius(radius)
+            }
             view.background = PrismGlassDrawable(view.context, radius, warn)
         }
     }

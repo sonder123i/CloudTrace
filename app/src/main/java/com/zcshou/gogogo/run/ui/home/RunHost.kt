@@ -1,6 +1,7 @@
 package com.zcshou.gogogo.run.ui.home
 
 import com.zcshou.gogogo.run.data.db.RunRouteEntity
+import com.zcshou.gogogo.run.engine.PaceStrategy
 import com.zcshou.gogogo.run.engine.RunRuntimeState
 
 /**
@@ -13,7 +14,8 @@ interface RunHost {
         paceSecPerKm: Int,
         laneDrift: Boolean,
         cooldown: Boolean,
-        reverseDirection: Boolean = false
+        reverseDirection: Boolean = false,
+        paceStrategy: PaceStrategy = PaceStrategy.STEADY
     )
 
     fun pauseResume()

@@ -125,15 +125,24 @@ class LensChipTrack(private val host: View) {
         private var stretchX = 0f
         private var squashY = 0f
 
+        /**
+         * 切换/回弹期间的温和微色散脉冲（0~0.14）。
+         * 与底栏按压同源：只在透镜真正在动的时候出现，静止透镜保持纯白无彩边。
+         */
+        private var dispersion = 0f
+
         fun noteVelocity(deltaPx: Float) {
             val normalized = (deltaPx / (10.5f * density)).coerceIn(0f, 1f)
             val sx = normalized * 0.12f
             val sy = normalized * 0.04f
+            val dz = normalized * 0.14f
             if (kotlin.math.abs(sx - stretchX) > 0.0015f ||
-                kotlin.math.abs(sy - squashY) > 0.0005f
+                kotlin.math.abs(sy - squashY) > 0.0005f ||
+                kotlin.math.abs(dz - dispersion) > 0.002f
             ) {
                 stretchX = sx
                 squashY = sy
+                dispersion = dz
                 invalidateSelf()
             }
         }
@@ -179,7 +188,8 @@ class LensChipTrack(private val host: View) {
                 right = cx + halfW,
                 bottom = cy + halfH,
                 radius = halfH,
-                density = density
+                density = density,
+                dispersion = dispersion
             )
         }
 

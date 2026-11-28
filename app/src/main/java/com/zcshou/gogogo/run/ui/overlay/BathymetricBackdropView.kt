@@ -10,6 +10,7 @@ import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.View
 import com.zcshou.gogogo.R
+import com.zcshou.gogogo.run.ui.glass.StaticBackdropProvider
 import kotlin.math.sin
 
 /**
@@ -32,20 +33,16 @@ class BathymetricBackdropView @JvmOverloads constructor(
 
     private val density = resources.displayMetrics.density
 
-    private val canvasPaint = Paint().apply {
-        color = context.getColor(R.color.pf_canvas)
-    }
+    private val canvasPaint = Paint()
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val basePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val contourPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 0.7f * density
-        color = context.getColor(R.color.dr_l0_contour)
     }
     private val gridPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 0.6f * density
-        color = context.getColor(R.color.dr_l0_grid)
     }
 
     private var baseGradient: Shader? = null
@@ -54,8 +51,49 @@ class BathymetricBackdropView @JvmOverloads constructor(
     private val contourPath = Path()
     private val gridPath = Path()
 
+    init {
+        loadPalette()
+    }
+
+    /** 昼夜 Token 只在构建与主题翻转时读取，onDraw 里 0 资源查询。 */
+    private fun loadPalette() {
+        canvasPaint.color = context.getColor(R.color.pf_canvas)
+        contourPaint.color = context.getColor(R.color.dr_l0_contour)
+        gridPaint.color = context.getColor(R.color.dr_l0_grid)
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // 向共享背景池登记：整页画布只离屏渲染一次，供所有玻璃卡片采样
+        StaticBackdropProvider.attach(this) { canvas -> draw(canvas) }
+    }
+
+    override fun onDetachedFromWindow() {
+        StaticBackdropProvider.detach(this)
+        super.onDetachedFromWindow()
+    }
+
+    /**
+     * 主题翻转：重读 Token → 重建渐变 → 作废快照。
+     * 需要在同一 Activity 内切换深浅色时由宿主显式调用。
+     */
+    fun onThemeChanged() {
+        loadPalette()
+        rebuildShaders()
+        StaticBackdropProvider.invalidate(this)
+        invalidate()
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
+        rebuildShaders()
+        // 尺寸变了：旧快照的网格与光斑位置全部失效
+        StaticBackdropProvider.invalidate(this)
+    }
+
+    private fun rebuildShaders() {
+        val w = width
+        val h = height
         if (w <= 0 || h <= 0) return
 
         baseGradient = LinearGradient(

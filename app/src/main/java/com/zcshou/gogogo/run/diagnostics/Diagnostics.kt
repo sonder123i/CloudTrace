@@ -32,7 +32,7 @@ object Diagnostics {
     private const val KEEP_BUNDLES = 2
     private const val MAX_CRASH_CHARS = 4000
 
-    private const val LOG_DIR = "logs"
+    const val LOG_DIR = "logs"
     private const val BUNDLE_DIR = "diagnostics"
 
     /** 生成完整诊断文本（含最近一次崩溃记录，若有）。 */

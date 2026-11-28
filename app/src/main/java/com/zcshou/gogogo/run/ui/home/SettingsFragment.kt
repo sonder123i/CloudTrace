@@ -50,6 +50,8 @@ class SettingsFragment : Fragment() {
 
     private lateinit var updateRow: View
     private lateinit var mascotModeGroup: RadioGroup
+    private lateinit var mascotModeHint: TextView
+    private lateinit var mascotGallery: View
     private lateinit var mascotPreview: MascotPeekView
     private lateinit var mascotPreviewLabel: TextView
     private lateinit var settingsEggCard: MascotEggCardView
@@ -90,9 +92,14 @@ class SettingsFragment : Fragment() {
         }
 
         mascotModeGroup = root.findViewById(R.id.mascotModeGroup)
+        mascotModeHint = root.findViewById(R.id.mascotModeHint)
+        mascotGallery = root.findViewById(R.id.btnMascotGallery)
         mascotPreview = root.findViewById(R.id.settingsMascotPreview)
         mascotPreviewLabel = root.findViewById(R.id.settingsMascotPreviewLabel)
         settingsEggCard = root.findViewById(R.id.settingsEggCard)
+        root.findViewById<android.widget.TextView>(R.id.btnMascotGallery)?.setOnClickListener {
+            com.zcshou.gogogo.mascot.MascotGalleryDialog.show(requireContext())
+        }
         mascotModeGroup.setOnCheckedChangeListener { _, checkedId ->
             if (bindingMascot) return@setOnCheckedChangeListener
             val mode = when (checkedId) {
@@ -167,6 +174,8 @@ class SettingsFragment : Fragment() {
         val quality = DisplayPrefs.quality(context)
         val tier = DeepRunGlassManager.tier(context)
         val downgrade = DeepRunGlassManager.downgradeReason(context)
+        // 副标题必须反映「实际激活的管线」，而不是用户选了什么：
+        // 选了液态玻璃但系统开了省电，这里会写「高透静态磨砂（系统省电模式）」。
         root.findViewById<View>(R.id.rowRenderQuality).findViewById<TextView>(R.id.envSubtitle).text =
             when {
                 quality == DisplayPrefs.RenderQuality.BALANCED -> "省电平衡 · ${tier.title}"
@@ -213,24 +222,40 @@ class SettingsFragment : Fragment() {
         )
         bindingMascot = false
         applyMascot(mode, announce = false)
+        refreshGalleryLabel()
+    }
+
+    /** 图鉴入口按钮上的「已收集 X/10」 */
+    private fun refreshGalleryLabel() {
+        val root = view ?: return
+        root.findViewById<android.widget.TextView>(R.id.btnMascotGallery)?.text =
+            "鲸鲸图鉴 · ${com.zcshou.gogogo.mascot.MascotEggStore.progressText(requireContext())}"
     }
 
     private fun applyMascot(mode: MascotMode, announce: Boolean) {
         if (!isAdded) return
         mascotPreviewLabel.visibility = if (mode == MascotMode.OFF) View.GONE else View.VISIBLE
+        // 纯净模式下鲸鲸完全不出现，下面这段「OFF 时…LIGHT…FULL…」的说明和
+        // 图鉴入口就成了「讲一个被隐藏的东西」，只剩占位。两者一起收起。
+        mascotModeHint.visibility = if (mode == MascotMode.OFF) View.GONE else View.VISIBLE
+        mascotGallery.visibility = if (mode == MascotMode.OFF) View.GONE else View.VISIBLE
         mascotPreview.bind(mode, MascotState.AVATAR, MascotDialogueEngine.State.IDLE)
         if (announce && mode == MascotMode.OFF) {
             settingsEggCard.showFor(MascotEgg.SULKING, 1800L)
+            com.zcshou.gogogo.mascot.MascotEggStore.unlock(requireContext(), MascotEgg.SULKING)
         } else {
             settingsEggCard.hideImmediately()
         }
         if (announce && mode != MascotMode.OFF) {
+            // 首次开启伴侣模式：解锁「初次见面」
+            com.zcshou.gogogo.mascot.MascotEggStore.unlock(requireContext(), MascotEgg.WELCOME_ARMS)
             val line = MascotDialogueEngine.onSystemEvent(
                 MascotDialogueEngine.State.IDLE,
                 bypassCooldown = true
             )
             if (line != null) mascotPreview.showBubble(line)
         }
+        refreshGalleryLabel()
     }
 
     private fun observeUpdateState() {
@@ -368,42 +393,44 @@ class SettingsFragment : Fragment() {
             DisplayPrefs.RenderQuality.OPTICAL,
             DisplayPrefs.RenderQuality.BALANCED
         )
-        val labels = arrayOf("液态玻璃（实时模糊）", "省电平衡（磨砂）")
+        val labels = arrayOf("液态玻璃（静态画布共享折射）", "省电平衡（零采样磨砂）")
         val checked = qualities.indexOf(DisplayPrefs.quality(context)).coerceAtLeast(0)
         GlassDialogs.builder(context)
             .setTitle(R.string.settings_render)
             .setSingleChoiceItems(labels, checked) { dialog, which ->
                 dialog.dismiss()
                 DisplayPrefs.setQuality(context, qualities[which])
+                // 立刻重算层级、作废旧渐变与旧画布快照，并顺延一次玻璃刷新节拍
                 DeepRunGlassManager.refreshAll()
+                GlassRenderGate.requestRefresh(320L)
                 refresh()
-                GlassFeedback.toast(context, "已切换：${labels[which]}")
+                GlassFeedback.toast(
+                    context,
+                    "已切换：${DeepRunGlassManager.tier(context).title}"
+                )
             }
             .show()
     }
 
     private fun pickTargetApp() {
-        val context = requireContext()
-        val pm = context.packageManager
-        val self = context.packageName
-        val apps = pm.getInstalledApplications(0)
-            .asSequence()
-            .filter { it.packageName != self && pm.getLaunchIntentForPackage(it.packageName) != null }
-            .map { it.packageName to it.loadLabel(pm).toString() }
-            .sortedBy { it.second }
-            .toList()
-        val labels = (listOf("不绑定") + apps.map { it.second }).toTypedArray()
-        val current = RunPrefs.targetApp(context)
-        val checked = apps.indexOfFirst { it.first == current } + 1
-        GlassDialogs.builder(context)
-            .setTitle("开跑时自动拉起的目标 App")
-            .setSingleChoiceItems(labels, if (checked > 0) checked else 0) { dialog, which ->
-                RunPrefs.setTargetApp(context, if (which == 0) null else apps[which - 1].first)
-                dialog.dismiss()
-                refresh()
-            }
-            .setNegativeButton("取消", null)
-            .show()
+        val context = context ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            val apps = com.zcshou.gogogo.run.guard.InstalledAppHelper.loadLaunchableApps(context)
+            if (!isAdded || view == null) return@launch
+            val uiCtx = requireContext()
+            val labels = (listOf("不绑定") + apps.map { it.second }).toTypedArray()
+            val current = RunPrefs.targetApp(uiCtx)
+            val checked = apps.indexOfFirst { it.first == current } + 1
+            GlassDialogs.builder(uiCtx)
+                .setTitle("开跑时自动拉起的目标 App")
+                .setSingleChoiceItems(labels, if (checked > 0) checked else 0) { dialog, which ->
+                    RunPrefs.setTargetApp(uiCtx, if (which == 0) null else apps[which - 1].first)
+                    dialog.dismiss()
+                    refresh()
+                }
+                .setNegativeButton("取消", null)
+                .show()
+        }
     }
 
     private fun showInjectionIntervalDialog() {
@@ -447,10 +474,8 @@ class SettingsFragment : Fragment() {
             .show()
     }
 
-    private fun appLabel(pkg: String): String = runCatching {
-        val pm = requireContext().packageManager
-        pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
-    }.getOrDefault(pkg)
+    private fun appLabel(pkg: String): String =
+        com.zcshou.gogogo.run.guard.InstalledAppHelper.appLabel(requireContext(), pkg)
 
     private fun updateSubtitle(state: UpdateManager.State): String {
         val current = "当前版本 v${BuildConfig.VERSION_NAME}"

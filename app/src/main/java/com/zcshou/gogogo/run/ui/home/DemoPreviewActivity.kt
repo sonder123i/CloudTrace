@@ -7,7 +7,9 @@ import android.os.Bundle
 import android.view.View
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.baidu.mapapi.map.BitmapDescriptor
 import com.baidu.mapapi.map.BitmapDescriptorFactory
 import com.baidu.mapapi.map.MapStatusUpdateFactory
@@ -33,6 +35,7 @@ class DemoPreviewActivity : AppCompatActivity() {
     private lateinit var mapView: MapView
     private lateinit var countdown: TextView
     private var marker: Marker? = null
+    private var dotIcon: BitmapDescriptor? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         ThemeHelper.apply(this)
@@ -44,6 +47,7 @@ class DemoPreviewActivity : AppCompatActivity() {
         mapView = findViewById(R.id.demoMap)
         countdown = findViewById(R.id.demoCountdown)
         MapStyleHelper.applyForTheme(mapView)
+        mapView.map.setOnMapLoadedCallback { MapStyleHelper.applyForTheme(mapView) }
         findViewById<View>(R.id.btnDemoClose).setOnClickListener { finish() }
 
         val map = mapView.map
@@ -71,28 +75,34 @@ class DemoPreviewActivity : AppCompatActivity() {
         )
 
         val icon = buildDotIcon()
+        dotIcon = icon
         marker = map.addOverlay(
             MarkerOptions().position(bdPoints.first()).icon(icon).anchor(0.5f, 0.5f)
         ) as? Marker
 
         lifecycleScope.launch {
-            val started = android.os.SystemClock.elapsedRealtime()
+            var activeElapsed = 0L
             var lastSec = -1
-            while (true) {
-                val elapsed = android.os.SystemClock.elapsedRealtime() - started
-                val t = (elapsed / 10_000.0).coerceIn(0.0, 1.0)
-                marker?.position = toBd(TrackMathUtils.interpolate(points, cumulative, total * t))
-                val sec = (10 - elapsed / 1000).coerceAtLeast(0).toInt()
-                if (sec != lastSec) {
-                    lastSec = sec
-                    countdown.text = if (sec > 0) {
-                        "虚拟光点将沿 400m 跑道演示 10 秒 · $sec"
-                    } else {
-                        "演示结束 · 完成 3 项配置后即可真实开跑"
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                var lastTick = android.os.SystemClock.elapsedRealtime()
+                while (activeElapsed < 10_000L) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    activeElapsed += (now - lastTick).coerceIn(0L, 250L)
+                    lastTick = now
+                    val t = (activeElapsed / 10_000.0).coerceIn(0.0, 1.0)
+                    marker?.position = toBd(TrackMathUtils.interpolate(points, cumulative, total * t))
+                    val sec = (10 - activeElapsed / 1000).coerceAtLeast(0).toInt()
+                    if (sec != lastSec) {
+                        lastSec = sec
+                        countdown.text = if (sec > 0) {
+                            "虚拟光点将沿 400m 跑道演示 10 秒 · $sec"
+                        } else {
+                            "演示结束 · 完成 3 项配置后即可真实开跑"
+                        }
                     }
+                    if (t >= 1.0) break
+                    delay(100)
                 }
-                if (t >= 1.0) break
-                delay(100)
             }
         }
     }
@@ -108,6 +118,9 @@ class DemoPreviewActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        runCatching { mapView.map.setOnMapLoadedCallback(null) }
+        runCatching { dotIcon?.recycle() }
+        dotIcon = null
         runCatching { mapView.onDestroy() }
         super.onDestroy()
     }

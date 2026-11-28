@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 悬浮窗选中档位：冰青柔光 + 冷银细边 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="@color/dr_ice_a20" />
-    <stroke
-        android:width="1dp"
-        android:color="@color/dr_overlay_rim_ice" />
-    <corners android:radius="100dp" />
-</shape>
+<!-- 悬浮窗选中档位：Google Blue 色调柔光 + 细边 + 波纹 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/dr_overlay_ripple">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/dr_overlay_tonal_bg" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/dr_overlay_rim_ice" />
+            <corners android:radius="100dp" />
+        </shape>
+    </item>
+</ripple>

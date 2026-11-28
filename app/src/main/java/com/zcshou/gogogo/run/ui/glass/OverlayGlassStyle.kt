@@ -1,8 +1,12 @@
 package com.zcshou.gogogo.run.ui.glass
 
+import android.annotation.SuppressLint
 import android.os.Build
+import android.view.HapticFeedbackConstants
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.OvershootInterpolator
 import androidx.dynamicanimation.animation.FloatValueHolder
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
@@ -110,5 +114,31 @@ object OverlayGlassStyle {
     /** 窗口被移除时调用：终止仍在运行的吸附弹簧，避免对已移除窗口反复 updateViewLayout。 */
     fun cancelSnap(view: View) {
         snapAnims.remove(view)?.cancel()
+    }
+
+    private val pressInterpolator = OvershootInterpolator(1.6f)
+
+    /** 悬浮窗通用按压回弹：按下微缩 0.94 + 轻触觉反馈，松手/取消过冲弹回。 */
+    @SuppressLint("ClickableViewAccessibility")
+    fun attachTactilePress(vararg views: View) {
+        views.forEach { target ->
+            target.setOnTouchListener { v, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        v.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        v.animate().scaleX(0.94f).scaleY(0.94f).setDuration(85L).start()
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        v.animate()
+                            .scaleX(1f)
+                            .scaleY(1f)
+                            .setDuration(180L)
+                            .setInterpolator(pressInterpolator)
+                            .start()
+                    }
+                }
+                false
+            }
+        }
     }
 }

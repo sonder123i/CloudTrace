@@ -58,10 +58,19 @@ class NavShadowView @JvmOverloads constructor(
     }
 
     fun update(widthPx: Int, heightPx: Int, bottomInsetPx: Int, cornerRadiusPx: Int = 0) {
-        navWidth = widthPx.toFloat()
-        navHeight = heightPx.toFloat()
-        navBottomInset = bottomInsetPx.toFloat()
-        navCornerRadius = if (cornerRadiusPx > 0) cornerRadiusPx.toFloat() else navHeight / 2f
+        val nextW = widthPx.toFloat()
+        val nextH = heightPx.toFloat()
+        val nextBottom = bottomInsetPx.toFloat()
+        val nextRadius = if (cornerRadiusPx > 0) cornerRadiusPx.toFloat() else nextH / 2f
+        if (nextW == navWidth && nextH == navHeight &&
+            nextBottom == navBottomInset && nextRadius == navCornerRadius
+        ) {
+            return
+        }
+        navWidth = nextW
+        navHeight = nextH
+        navBottomInset = nextBottom
+        navCornerRadius = nextRadius
         invalidate()
     }
 

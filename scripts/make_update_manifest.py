@@ -115,6 +115,11 @@ def main():
     notes = args.notes
     if not notes and args.notes_file:
         notes = Path(args.notes_file).read_text(encoding="utf-8")
+    if not notes.strip():
+        raise SystemExit(
+            "缺少更新说明：请用 --notes-file release-notes/vX.Y.Z.md 写清本次改动，"
+            "更新弹窗会直接把它展示给用户"
+        )
     notes = notes[:20000]
     version_code, version_name = read_version()
 

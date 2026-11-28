@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Shader
@@ -60,6 +61,13 @@ class VernierSeekBar @JvmOverloads constructor(
     private val thumbCore = Paint(Paint.ANTI_ALIAS_FLAG)
     private val thumbRect = RectF()
 
+    /** 复用矩阵：渐变按局部坐标构建一次，每帧只做平移。 */
+    private val localMatrix = Matrix()
+    private var trackShader: Shader? = null
+    private var thumbShader: Shader? = null
+    private var fiberColors: IntArray? = null
+    private var primaryFiberColor = 0
+
     private val baseTickColor = context.getColor(R.color.pf_text_tertiary)
     private val activeTickColor = context.getColor(R.color.dr_fiber_indigo)
     private val trackBaseColor = context.getColor(R.color.pf_stroke)
@@ -73,6 +81,38 @@ class VernierSeekBar @JvmOverloads constructor(
         thumb = ColorDrawable(Color.TRANSPARENT)
         splitTrack = false
         setPadding(dp(12f).toInt(), paddingTop, dp(12f).toInt(), paddingBottom)
+        refreshPalette()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        refreshPalette()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        buildShaders()
+    }
+
+    /** 主题色只在挂载与尺寸变化时读取：`FiberStyle` 内部要走一次 Prefs 判昼夜。 */
+    private fun refreshPalette() {
+        fiberColors = FiberStyle.colors(context)
+        primaryFiberColor = FiberStyle.primaryColor(context)
+        buildShaders()
+    }
+
+    private fun buildShaders() {
+        val colors = fiberColors ?: return
+        val w = width
+        val h = height
+        if (w <= 0 || h <= 0) return
+        val left = paddingLeft.toFloat()
+        val right = (w - paddingRight).toFloat()
+        val lineWidth = (right - left).coerceAtLeast(1f)
+        val r = dp(10f)
+        // 局部坐标：(0,0)→(lineWidth,0) / (-r,-r)→(r,r)，绘制时按实际位置平移
+        trackShader = LinearGradient(0f, 0f, lineWidth, 0f, colors, null, Shader.TileMode.CLAMP)
+        thumbShader = LinearGradient(-r, -r, r, r, colors, null, Shader.TileMode.CLAMP)
     }
 
     override fun setOnSeekBarChangeListener(listener: OnSeekBarChangeListener?) {
@@ -141,12 +181,12 @@ class VernierSeekBar @JvmOverloads constructor(
         canvas.drawLine(left, cy - dp(2.2f), right, cy - dp(2.2f), groovePaint)
 
         val thumbX = left + (right - left) * progressRatio
-        if (thumbX > left) {
+        val track = trackShader
+        if (thumbX > left && track != null) {
             trackPaint.alpha = 255
-            trackPaint.shader = LinearGradient(
-                left, cy, right, cy,
-                FiberStyle.colors(context), null, Shader.TileMode.CLAMP
-            )
+            localMatrix.setTranslate(left, cy)
+            track.setLocalMatrix(localMatrix)
+            trackPaint.shader = track
             canvas.drawLine(left, cy, thumbX, cy, trackPaint)
             trackPaint.shader = null
         }
@@ -154,15 +194,17 @@ class VernierSeekBar @JvmOverloads constructor(
         // 3) 圆钮：22% 光晕 + 光纤渐变核心 + 冷白细边
         if (showThumb) {
             val r = dp(10f)
-            thumbGlow.color = FiberStyle.primaryColor(context)
+            thumbGlow.color = primaryFiberColor
             thumbGlow.alpha = 46
             canvas.drawCircle(thumbX, cy, r * 1.9f, thumbGlow)
 
             thumbRect.set(thumbX - r, cy - r, thumbX + r, cy + r)
-            thumbPaint.shader = LinearGradient(
-                thumbRect.left, thumbRect.top, thumbRect.right, thumbRect.bottom,
-                FiberStyle.colors(context), null, Shader.TileMode.CLAMP
-            )
+            val thumbGradient = thumbShader
+            if (thumbGradient != null) {
+                localMatrix.setTranslate(thumbX, cy)
+                thumbGradient.setLocalMatrix(localMatrix)
+                thumbPaint.shader = thumbGradient
+            }
             canvas.drawCircle(thumbX, cy, r, thumbPaint)
             thumbPaint.shader = null
             canvas.drawCircle(thumbX, cy, r, thumbRim)

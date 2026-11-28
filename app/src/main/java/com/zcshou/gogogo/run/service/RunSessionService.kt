@@ -24,6 +24,7 @@ import com.zcshou.gogogo.run.bridge.InjectorProvider
 import com.zcshou.gogogo.run.data.prefs.AdvancedPrefs
 import com.zcshou.gogogo.run.data.repository.RunRepository
 import com.zcshou.gogogo.run.engine.RunCruiseEngine
+import com.zcshou.gogogo.run.engine.PaceStrategy
 import com.zcshou.gogogo.run.engine.RunPhase
 import com.zcshou.gogogo.run.engine.RunRuntimeState
 import com.zcshou.gogogo.run.guard.EnvGuardManager
@@ -63,6 +64,9 @@ class RunSessionService : Service() {
         private const val EXTRA_LINKED_PKG = "linked_pkg"
         private const val EXTRA_REVERSE = "reverse_direction"
         private const val EXTRA_TARGET_METERS = "target_meters"
+        private const val EXTRA_DISTANCE_JITTER = "distance_jitter_meters"
+        private const val EXTRA_AUTO_WIFI = "auto_isolate_wifi"
+        private const val EXTRA_PACE_STRATEGY = "pace_strategy"
 
         const val ACTION_START = "com.zcshou.gogogo.run.action.START"
         const val ACTION_TOGGLE_PAUSE = "com.zcshou.gogogo.run.action.TOGGLE_PAUSE"
@@ -94,7 +98,10 @@ class RunSessionService : Service() {
             laneDrift: Boolean,
             cooldown: Boolean,
             linkedPkg: String? = null,
-            reverseDirection: Boolean = false
+            reverseDirection: Boolean = false,
+            distanceJitterMeters: Int = 150,
+            autoIsolateWifi: Boolean = true,
+            paceStrategy: String = PaceStrategy.STEADY.name
         ): Intent = Intent(context, RunSessionService::class.java).apply {
             action = ACTION_START
             putExtra(EXTRA_ROUTE_ID, routeId)
@@ -103,6 +110,9 @@ class RunSessionService : Service() {
             putExtra(EXTRA_DRIFT, laneDrift)
             putExtra(EXTRA_COOLDOWN, cooldown)
             putExtra(EXTRA_REVERSE, reverseDirection)
+            putExtra(EXTRA_DISTANCE_JITTER, distanceJitterMeters)
+            putExtra(EXTRA_AUTO_WIFI, autoIsolateWifi)
+            putExtra(EXTRA_PACE_STRATEGY, paceStrategy)
             if (linkedPkg != null) putExtra(EXTRA_LINKED_PKG, linkedPkg)
         }
 
@@ -124,7 +134,10 @@ class RunSessionService : Service() {
         val drift: Boolean,
         val cooldown: Boolean,
         val linkedPkg: String?,
-        val reverseDirection: Boolean
+        val reverseDirection: Boolean,
+        val distanceJitterMeters: Int,
+        val autoIsolateWifi: Boolean,
+        val paceStrategy: String
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -133,14 +146,17 @@ class RunSessionService : Service() {
     private var engine: RunCruiseEngine? = null
     /** 引擎状态收集协程：断连/重绑时必须取消，防止双 collector 并存 */
     private var stateCollectJob: kotlinx.coroutines.Job? = null
+    private var pendingStopJob: kotlinx.coroutines.Job? = null
+    private var foregroundReady = false
     /** 悬浮窗授权结果：通知每秒刷新多次，缓存一次 appops 查询避免反复 IPC。 */
     private var overlayAllowed = false
     private var serviceGoRequested = false
     private var pendingStart: StartConfig? = null
     private var runStarted = false
     private var finishHandled = false
-    private var wifiDisabledByUs = false
-    private var scanDisabledByUs = false
+    // 主线程（onDestroy/onRunFinished）与 IO 协程（断网/恢复）并发读写，必须 volatile
+    @Volatile private var wifiDisabledByUs = false
+    @Volatile private var scanDisabledByUs = false
     private var linkedAppLaunched = false
     private var linkedTargetAppPkg: String? = null
     private var lastNotifyMs = 0L
@@ -155,6 +171,7 @@ class RunSessionService : Service() {
     private var screenReceiver: BroadcastReceiver? = null
     private var screenOff = false
     private var cruiseIsRunning = false
+    private var lastWidgetPhase: RunPhase? = null
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -192,6 +209,12 @@ class RunSessionService : Service() {
                     updateNotification(merged)
                     handleHaptics(merged)
                     handleWakeLock(merged)
+                    // 桌面小组件的状态点/按钮只在相位切换时刷新，避免每拍广播
+                    if (merged.phase != lastWidgetPhase) {
+                        lastWidgetPhase = merged.phase
+                        com.zcshou.gogogo.run.widget.CloudTraceWidgetProvider
+                            .refreshAll(this@RunSessionService)
+                    }
                     if (merged.phase == RunPhase.FINISHED) onRunFinished()
                 }
             }
@@ -200,9 +223,7 @@ class RunSessionService : Service() {
 
         override fun onServiceDisconnected(name: ComponentName?) {
             // ServiceGo 进程内死亡后系统会自动重连（BIND_AUTO_CREATE），但旧引擎已失联：
-            // 不处理会导致旧引擎协程继续注入 + 新旧两个 collector 交替发布状态（通知抖动）。
-            // 这里立即取消收集、释放引擎（release 会在 finalizeScope 落库 ABORTED 记录），
-            // 发布 PAUSED 防止“跑圈中”假进度，随后结束本服务
+            // 取消收集、释放引擎（落库 ABORTED）、发布 FINISHED 解除 sessionActive 锁定并恢复 Wi-Fi
             stateCollectJob?.cancel()
             stateCollectJob = null
             engine?.release()
@@ -211,12 +232,14 @@ class RunSessionService : Service() {
             updateRenderSuppression()
             releaseWakeLock()
             val disconnected = RunRuntimeState(
-                phase = RunPhase.PAUSED,
+                phase = RunPhase.FINISHED,
                 message = "注入服务已断开，本次运行已中止"
             )
             RunSessionHolder.publish(disconnected)
             updateNotification(disconnected)
-            scope.launch {
+            pendingStopJob?.cancel()
+            pendingStopJob = scope.launch {
+                restoreWifiIfNeeded()
                 delay(1_500)
                 stopSelf()
             }
@@ -244,6 +267,7 @@ class RunSessionService : Service() {
             stopSelf()
             return
         }
+        foregroundReady = true
         stepGuard = StepGuard(this)
         registerInjectionAlarm()
         registerScreenState()
@@ -254,7 +278,9 @@ class RunSessionService : Service() {
         val contentIntent = PendingIntent.getActivity(
             this,
             3,
-            Intent(this, RunHomeActivity::class.java),
+            Intent(this, RunHomeActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -271,12 +297,26 @@ class RunSessionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!foregroundReady) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         // 用户可能刚从设置页返回，重新读一次悬浮窗授权
         overlayAllowed = Settings.canDrawOverlays(this)
         when (intent?.action) {
             ACTION_START -> {
                 val routeId = intent.getLongExtra(EXTRA_ROUTE_ID, 0L)
                 if (routeId > 0) {
+                    pendingStopJob?.cancel()
+                    pendingStopJob = null
+                    finishHandled = false
+                    // 同实例连续开跑（收尾窗口内二次 START）：联动启动与半程
+                    // 震动是「每次跑」语义，不重置会让第二跑静默缺失这两个反馈
+                    linkedAppLaunched = false
+                    halfHapticDone = false
+                    if (engine?.state?.value?.phase == RunPhase.FINISHED) {
+                        runStarted = false
+                    }
                     pendingStart = StartConfig(
                         routeId = routeId,
                         targetKm = intent.getFloatExtra(EXTRA_KM, 3.0f),
@@ -284,30 +324,43 @@ class RunSessionService : Service() {
                         drift = intent.getBooleanExtra(EXTRA_DRIFT, true),
                         cooldown = intent.getBooleanExtra(EXTRA_COOLDOWN, true),
                         linkedPkg = intent.getStringExtra(EXTRA_LINKED_PKG),
-                        reverseDirection = intent.getBooleanExtra(EXTRA_REVERSE, false)
+                        reverseDirection = intent.getBooleanExtra(EXTRA_REVERSE, false),
+                        distanceJitterMeters = intent.getIntExtra(EXTRA_DISTANCE_JITTER, 150).coerceIn(0, 500),
+                        autoIsolateWifi = intent.getBooleanExtra(EXTRA_AUTO_WIFI, true),
+                        paceStrategy = intent.getStringExtra(EXTRA_PACE_STRATEGY)
+                            ?: PaceStrategy.STEADY.name
                     )
-                    // 先绑定 ServiceGo 拿到所有权，再停漫游服务：
-                    // RoamService.onDestroy → FreeRoamController.release() 会 stopService(ServiceGo)，
-                    // 本服务的绑定在先即可保证 ServiceGo 存活（先绑先得）
+                    // 立即将会话标记为活跃，再停 RoamService，确保 FreeRoamController.release() 不会误删 Provider
+                    if (!RunSessionHolder.sessionActive) {
+                        RunSessionHolder.publish(RunRuntimeState(phase = RunPhase.ENV_GUARD))
+                    }
                     ensureServiceGo()
                     RoamService.stop(this)
                     maybeStartEngine()
+                } else if (engine == null) {
+                    stopSelf()
                 }
             }
 
             ACTION_TOGGLE_PAUSE -> {
-                val phase = engine?.state?.value?.phase
-                if (phase == RunPhase.PAUSED) engine?.resume() else engine?.pause()
+                val cruise = engine
+                if (cruise == null) {
+                    stopSelf()
+                } else if (cruise.state.value.phase == RunPhase.PAUSED) {
+                    cruise.resume()
+                } else {
+                    cruise.pause()
+                }
             }
 
             ACTION_DETOUR -> engine?.insertDetour(
                 intent.getDoubleExtra("lat", 0.0),
                 intent.getDoubleExtra("lng", 0.0)
-            )
+            ) ?: run { if (engine == null && pendingStart == null) stopSelf() }
 
-            ACTION_FINISH_EARLY -> engine?.finishEarly()
+            ACTION_FINISH_EARLY -> engine?.finishEarly() ?: stopSelf()
 
-            ACTION_ABORT -> engine?.abort()
+            ACTION_ABORT -> engine?.abort() ?: stopSelf()
 
             ACTION_MANUAL_TAKEOVER -> engine?.setManualOverride(true)
 
@@ -320,6 +373,8 @@ class RunSessionService : Service() {
             ACTION_ADJUST_TARGET -> engine?.adjustTargetMeters(
                 intent.getDoubleExtra(EXTRA_TARGET_METERS, 0.0)
             )
+
+            else -> if (engine == null && pendingStart == null) stopSelf()
         }
         return START_NOT_STICKY
     }
@@ -327,8 +382,20 @@ class RunSessionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        scope.cancel()
+        pendingStopJob?.cancel()
+        stateCollectJob?.cancel()
+        // 先释放引擎落库，再取消服务协程，并兜底重置全局会话状态
         engine?.release()
+        engine = null
+        scope.cancel()
+        if (RunSessionHolder.sessionActive) {
+            RunSessionHolder.reset()
+        }
+        if (wifiDisabledByUs || scanDisabledByUs) {
+            kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                restoreWifiIfNeeded()
+            }
+        }
         stepGuard?.stop()
         releaseWakeLock()
         injectionReceiver?.let { runCatching { unregisterReceiver(it) } }
@@ -363,11 +430,13 @@ class RunSessionService : Service() {
         scope.launch {
             val route = repository.getRoute(config.routeId)
             if (route == null) {
+                RunSessionHolder.reset()
                 stopSelf()
                 return@launch
             }
-            // 实验性能力：仅在高级选项里显式开启且 Shizuku 就绪时才自动断 Wi-Fi
-            if (AdvancedPrefs.isShizukuAutoWifiEnabled(this@RunSessionService) &&
+            // 实验性能力：仅在高级选项与定时配置同时允许且 Shizuku 就绪时才自动断 Wi-Fi
+            if (config.autoIsolateWifi &&
+                AdvancedPrefs.isShizukuAutoWifiEnabled(this@RunSessionService) &&
                 EnvGuardManager.isShizukuReady()
             ) {
                 // Shizuku newProcess/waitFor 是进程阻塞调用，必须移出主线程防 ANR
@@ -380,17 +449,37 @@ class RunSessionService : Service() {
                     }
                 }
             }
+            // 解码轨迹 JSON 放到后台默认线程池，避免阻塞主线程
+            val densePoints = withContext(Dispatchers.Default) {
+                com.zcshou.gogogo.run.engine.TrackJsonCodec.decode(route.denseWaypointsJson)
+            }
             launchLinkedTargetApp()
             stepGuard?.start()
-            cruise.start(
+            cruise.startWithPoints(
                 route = route,
+                densePoints = densePoints,
                 targetKm = config.targetKm,
                 targetPaceSecPerKm = config.pace,
-                distanceJitterMeters = 150,
+                distanceJitterMeters = config.distanceJitterMeters,
                 enableLaneDrift = config.drift,
                 enableCooldownWalk = config.cooldown,
-                reverseDirection = config.reverseDirection
+                reverseDirection = config.reverseDirection,
+                paceStrategy = PaceStrategy.fromName(config.paceStrategy)
             )
+        }
+    }
+
+    private suspend fun restoreWifiIfNeeded() {
+        if (!wifiDisabledByUs && !scanDisabledByUs) return
+        withContext(Dispatchers.IO) {
+            if (wifiDisabledByUs) {
+                ShizukuWifiHelper.setWifiEnabled(true)
+                wifiDisabledByUs = false
+            }
+            if (scanDisabledByUs) {
+                ShizukuWifiHelper.setWifiScanAlwaysEnabled(true)
+                scanDisabledByUs = false
+            }
         }
     }
 
@@ -399,19 +488,9 @@ class RunSessionService : Service() {
         finishHandled = true
         stepGuard?.stop()
         releaseWakeLock()
-        scope.launch {
-            if (wifiDisabledByUs || scanDisabledByUs) {
-                withContext(Dispatchers.IO) {
-                    if (wifiDisabledByUs) {
-                        ShizukuWifiHelper.setWifiEnabled(true)
-                        wifiDisabledByUs = false
-                    }
-                    if (scanDisabledByUs) {
-                        ShizukuWifiHelper.setWifiScanAlwaysEnabled(true)
-                        scanDisabledByUs = false
-                    }
-                }
-            }
+        pendingStopJob?.cancel()
+        pendingStopJob = scope.launch {
+            restoreWifiIfNeeded()
             delay(1500)
             stopSelf()
         }
@@ -591,7 +670,9 @@ class RunSessionService : Service() {
         val contentIntent = PendingIntent.getActivity(
             this,
             0,
-            Intent(this, RunHomeActivity::class.java),
+            Intent(this, RunHomeActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val toggleIntent = PendingIntent.getService(
