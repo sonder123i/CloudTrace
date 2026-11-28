@@ -8,9 +8,24 @@ object AdvancedPrefs {
     private const val NAME = "pf_advanced"
     private const val KEY_SHIZUKU_WIFI = "shizuku_auto_wifi"
     private const val KEY_INJECTION_INTERVAL = "injection_interval_ms"
+    private const val KEY_STEP_GUARD = "step_guard"
 
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(NAME, Context.MODE_PRIVATE)
+
+    /**
+     * 计步守护：虚拟里程在走、但硬件步数长时间不增长时提醒「请放入口袋」。
+     *
+     * **默认关闭**：它依赖系统计步传感器与活动识别权限，不同机型差异大，
+     * 静置、骑车、把手机拿在手里都会误报，对多数用户是噪音而非帮助。
+     * 需要的人可以自己打开。
+     */
+    fun isStepGuardEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_STEP_GUARD, false)
+
+    fun setStepGuardEnabled(context: Context, enabled: Boolean) {
+        prefs(context).edit().putBoolean(KEY_STEP_GUARD, enabled).apply()
+    }
 
     fun isShizukuAutoWifiEnabled(context: Context): Boolean =
         prefs(context).getBoolean(KEY_SHIZUKU_WIFI, false)

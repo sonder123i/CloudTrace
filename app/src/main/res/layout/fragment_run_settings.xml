@@ -359,6 +359,16 @@
                     <include
                         android:id="@+id/rowShizuku"
                         layout="@layout/item_env_switch" />
+
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginStart="16dp"
+                        android:background="@color/pf_stroke" />
+
+                    <include
+                        android:id="@+id/rowStepGuard"
+                        layout="@layout/item_env_switch" />
                 </LinearLayout>
             </com.zcshou.gogogo.run.ui.glass.LiquidGlassContainer>
 

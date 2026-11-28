@@ -1026,7 +1026,7 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
                 NotificationChannel(channelId, "${getString(R.string.app_name)}提示", NotificationManager.IMPORTANCE_LOW)
             )
             val notification = NotificationCompat.Builder(this, channelId)
-                .setSmallIcon(R.drawable.ic_stat_cloudtrace)
+                .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle("模拟定位已停止")
                 .setContentText("真实 GPS 已恢复")
                 .setAutoCancel(true)
@@ -1062,8 +1062,13 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
      * Android 13+ 的 POST_NOTIFICATIONS 弹窗可能永远不出现。
      * 不阻塞开跑：本次运行未授权的功能按各自降级路径静默禁用，
      * 授权后下一次运行自动生效。
+     *
+     * 计步守护默认关闭，此时**不再申请 ACTIVITY_RECOGNITION**：
+     * 「身体活动」是敏感权限，没打算用就不该向用户要。
      */
     private fun ensureNotificationAndRecognitionPermissions() {
+        val stepGuardEnabled =
+            com.zcshou.gogogo.run.data.prefs.AdvancedPrefs.isStepGuardEnabled(this)
         val missing = buildList {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 ContextCompat.checkSelfPermission(this@RunHomeActivity, Manifest.permission.POST_NOTIFICATIONS) !=
@@ -1071,7 +1076,8 @@ class RunHomeActivity : AppCompatActivity(), RunHost {
             ) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            if (stepGuardEnabled &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
                 ContextCompat.checkSelfPermission(this@RunHomeActivity, Manifest.permission.ACTIVITY_RECOGNITION) !=
                 PackageManager.PERMISSION_GRANTED
             ) {

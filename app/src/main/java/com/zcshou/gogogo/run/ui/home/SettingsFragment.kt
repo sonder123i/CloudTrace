@@ -366,6 +366,24 @@ class SettingsFragment : Fragment() {
             }
             AdvancedPrefs.setShizukuAutoWifiEnabled(ctx, checked)
         }
+
+        // 计步守护：默认关闭。开启后开跑期间若虚拟里程在走、硬件步数长期不动，
+        // 胶囊会提示「请放入口袋」。
+        val stepRow = root.findViewById<View>(R.id.rowStepGuard)
+        stepRow.findViewById<TextView>(R.id.envTitle).text =
+            getString(R.string.settings_step_guard)
+        stepRow.findViewById<TextView>(R.id.envSubtitle).text =
+            getString(R.string.settings_step_guard_desc)
+        val stepSwitch = stepRow.findViewById<SwitchCompat>(R.id.advancedSwitch)
+        stepSwitch.isChecked = AdvancedPrefs.isStepGuardEnabled(requireContext())
+        stepSwitch.setOnCheckedChangeListener { _, checked ->
+            val ctx = context ?: return@setOnCheckedChangeListener
+            AdvancedPrefs.setStepGuardEnabled(ctx, checked)
+            GlassFeedback.toast(
+                ctx,
+                if (checked) "已开启计步守护：下次开跑生效" else "已关闭计步守护"
+            )
+        }
     }
 
     private fun showThemeDialog() {

@@ -268,7 +268,13 @@ class RunSessionService : Service() {
             return
         }
         foregroundReady = true
-        stepGuard = StepGuard(this)
+        // 计步守护默认关闭（见 AdvancedPrefs）：关闭时根本不创建 StepGuard，
+        // 后续 update()/start()/stop() 全部走空安全短路，不注册传感器也不产生告警
+        stepGuard = if (com.zcshou.gogogo.run.data.prefs.AdvancedPrefs.isStepGuardEnabled(this)) {
+            StepGuard(this)
+        } else {
+            null
+        }
         registerInjectionAlarm()
         registerScreenState()
     }
@@ -284,7 +290,7 @@ class RunSessionService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_cloudtrace)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("${getString(R.string.app_name)} · 无法开跑")
             .setContentText(reason)
             .setContentIntent(contentIntent)
@@ -718,7 +724,7 @@ class RunSessionService : Service() {
             else -> "$brand · 跑圈中"
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_cloudtrace)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(title)
             .setContentText(text)
             .setSubText(

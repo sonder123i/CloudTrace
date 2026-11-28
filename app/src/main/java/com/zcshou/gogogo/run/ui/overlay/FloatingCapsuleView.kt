@@ -125,11 +125,12 @@ class FloatingCapsuleView @JvmOverloads constructor(
     /**
      * 折叠态最小帧间隔：0 = 跟随屏幕刷新率满帧。
      *
-     * 早期为了省电设成 50ms（20fps），但实测肉眼能明显看出卡顿——彗尾是连续位移，
-     * 20fps 下的跳步非常显眼。这套绘制的实际成本是每帧 26 次 drawBitmap，
-     * 远低于一次普通布局，没必要为它牺牲流畅度。
+     * 早期为了省电先后设成 50ms（20fps）与 33ms（30fps），实测都能肉眼看出卡顿——
+     * 彗尾是连续位移，低帧率下的跳步非常显眼。这套绘制的实际成本是每帧 26 次
+     * drawBitmap，远低于一次普通布局，没必要为它牺牲流畅度。省电需求由
+     * 「省电平衡」档整体关掉光束来承担，而不是在这里降帧。
      */
-    private var beamMinFrameMs = 33L
+    private var beamMinFrameMs = 0L
     private var beamRunning = false
     private var beamPaused = false
     private var beamScheduled = false
@@ -138,8 +139,14 @@ class FloatingCapsuleView @JvmOverloads constructor(
     private var ghostHidden = false
     private val balancedRender = DisplayPrefs.quality(context) == DisplayPrefs.RenderQuality.BALANCED
 
-    /** 计步脉搏点是否可用：有传感器且已授予活动识别权限（与 StepGuard 启动条件一致） */
+    /**
+     * 计步脉搏点是否可用：开关已开启、有传感器且已授予活动识别权限
+     * （与 StepGuard 启动条件一致；开关关闭时 StepGuard 不创建，
+     * 这里也不能画那个永远告警的脉冲点）。
+     */
     private val stepSensorAvailable: Boolean by lazy {
+        val enabled =
+            com.zcshou.gogogo.run.data.prefs.AdvancedPrefs.isStepGuardEnabled(context)
         val hasSensor = (context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager)
             ?.getDefaultSensor(Sensor.TYPE_STEP_COUNTER) != null
         val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
@@ -147,7 +154,7 @@ class FloatingCapsuleView @JvmOverloads constructor(
                 context,
                 android.Manifest.permission.ACTIVITY_RECOGNITION
             ) == PackageManager.PERMISSION_GRANTED
-        hasSensor && granted
+        enabled && hasSensor && granted
     }
 
     /**

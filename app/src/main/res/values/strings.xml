@@ -283,6 +283,8 @@
     <string name="settings_wifi_scan">后台 Wi-Fi 扫描</string>
     <string name="settings_inject">坐标注入频率</string>
     <string name="settings_shizuku">Shizuku 自动断网（实验性）</string>
+    <string name="settings_step_guard">计步守护</string>
+    <string name="settings_step_guard_desc">步数长时间不动时提醒放入口袋 · 默认关闭</string>
     <string name="settings_update">应用更新</string>
     <string name="settings_feedback">问题反馈与诊断</string>
     <string name="settings_feedback_sub">复制设备信息、导出日志</string>
