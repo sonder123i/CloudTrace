@@ -55,7 +55,7 @@ class UpdateDownloadService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_cloudtrace)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(
                 if (state.phase == UpdateManager.Phase.READY) {
                     "更新已下载，点击安装"

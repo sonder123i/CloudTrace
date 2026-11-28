@@ -406,13 +406,9 @@ class UpdateManager internal constructor(
         downloadJob = scope.launch {
             val manifest = task ?: return@launch
             val deadline = android.os.SystemClock.elapsedRealtime() + 20 * 60 * 1000
-            val order = listOfNotNull(
-                requestedMirror,
-                prefs.getString("successful-mirror", null)
-            ) + manifest.mirrors.map { it.id }
-            val mirrors = manifest.mirrors.sortedBy {
-                order.indexOf(it.id).let { index -> if (index < 0) Int.MAX_VALUE else index }
-            }
+            // 线路顺序以清单为准（Gitee 优先），只把用户手动指定的线路提到最前。
+            // 不再参考「上次成功的线路」，见 UpdateMirrorOrder 的说明。
+            val mirrors = UpdateMirrorOrder.arrange(manifest.mirrors, requestedMirror)
             var finalMessage = "下载线路暂时不可用，已保留断点"
             var finalCode = "DOWNLOAD_FAILED"
             try {
@@ -480,7 +476,7 @@ class UpdateManager internal constructor(
                         if (!partial.renameTo(completed)) {
                             updateError("FILE_SAVE", "无法保存安装包，请重试")
                         }
-                        prefs.edit().putString("successful-mirror", mirror.id).apply()
+                        // 不再记忆「上次成功的线路」：它会长期顶掉清单声明的优先级。
                         mutable.update {
                             it.copy(
                                 phase = Phase.READY,

@@ -51,7 +51,7 @@ object RunScheduleNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_cloudtrace)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("该跑步了：${route.name}")
             .setContentText(
                 String.format(Locale.US, "目标 %.1f km · 点按立即开跑", schedule.targetDistanceKm)

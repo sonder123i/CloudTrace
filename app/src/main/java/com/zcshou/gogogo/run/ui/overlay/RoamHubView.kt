@@ -63,6 +63,8 @@ class RoamHubView(context: Context) : LinearLayout(context) {
     private var beamScheduled = false
     private var beamStartAtMs = 0L
     private var beamLastFrameMs = 0L
+    /** 0 = 跟随屏幕刷新率满帧；彗尾是连续位移，30fps 下跳步明显，绘制成本又低（见 FloatingCapsuleView 注释）。 */
+    private var beamMinFrameMs = 0L
 
     private val beamFrameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
@@ -70,7 +72,7 @@ class RoamHubView(context: Context) : LinearLayout(context) {
             if (balancedRender || !isAttachedToWindow || visibility != VISIBLE) return
             val now = frameTimeNanos / 1_000_000L
             if (beamStartAtMs == 0L) beamStartAtMs = now
-            if (beamLastFrameMs == 0L || now - beamLastFrameMs >= 33L) {
+            if (beamLastFrameMs == 0L || now - beamLastFrameMs >= beamMinFrameMs) {
                 beamLastFrameMs = now
                 val elapsed = now - beamStartAtMs
                 val t = elapsed / 1000.0

@@ -82,7 +82,7 @@ class RoamService : Service() {
         foregroundReady = foregroundStarted
         if (!foregroundStarted) {
             val blocked = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_stat_cloudtrace)
+                .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle("${getString(R.string.app_name)} · 无法开始漫游")
                 .setContentText("缺少定位权限：请在系统设置授予「精确位置」后再试")
                 .setAutoCancel(true)
@@ -280,7 +280,7 @@ class RoamService : Service() {
 
     private fun buildNotification(speedMps: Double): Notification {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stat_cloudtrace)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("自由漫游")
             .setContentText(
                 if (speedMps > 0.05) String.format(Locale.US, "漫游中 · %.1f m/s", speedMps)
