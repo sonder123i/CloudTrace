@@ -89,6 +89,16 @@ GOGOGO_UPDATE_ALLOWED_HOSTS=<你的域名>,gitee.com,foruda.gitee.com,github.com
 
 6. 提交并推送 `docs/update/stable.json`；Pages 更新后主源生效。
 7. Gitee 同步 `docs/update/stable.json` 与 Release 附件。
+8. **校验每个镜像上的文件与清单一致**（必做，不是可选）：
+
+   ```bash
+   python -I scripts/verify_update_mirrors.py --manifest docs/update/stable.json
+   ```
+
+   它会逐个拉取清单里的镜像地址，比对 `size` / `sha256` 与签名清单是否一致。
+   任一镜像不一致都必须重新上传正确的 APK，否则客户端会在下载前拦截并报
+   「下载文件长度与清单不一致」，用户完全无法更新（1.14.4 就踩过这个坑）。
+   上传完立刻回读校验，不要等到用户反馈。
 
 ## 3. 验证
 
